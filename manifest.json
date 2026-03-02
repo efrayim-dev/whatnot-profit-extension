@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Whatnot Profit & Cost Alerts",
+  "version": "1.0.0",
+  "description": "Shows item cost on load and sale profit after 12% fee on Whatnot.",
+  "permissions": [],
+  "host_permissions": [
+    "https://www.whatnot.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.whatnot.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start"
+    }
+  ]
+}
