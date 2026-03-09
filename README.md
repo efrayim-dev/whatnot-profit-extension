@@ -6,7 +6,7 @@ Chrome/Opera extension that:
 - Calculates:
   - sale price
   - item cost
-  - net after 12% fee
+  - net after 15% fee
   - difference (`net - cost`)
 - Shows a popup when a listing/auction item loads, with current item cost.
 

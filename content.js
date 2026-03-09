@@ -1,14 +1,13 @@
 (function () {
-  const GRAPHQL_URL = "https://www.whatnot.com/services/graphql/?operationName=SoldAuditRecentSales&ssr=0";
+  const GRAPHQL_URL = "https://www.whatnot.com/services/graphql/";
   const EXT_VERSION =
     typeof chrome !== "undefined" && chrome.runtime?.getManifest
       ? chrome.runtime.getManifest().version
       : "dev";
   const LIVE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const FEE_MULTIPLIER = 0.88;
+  const FEE_MULTIPLIER = 0.85;
   const POLL_MS = 1000;
 
-  const seenSaleIds = new Set();
   const listingCostCache = new Map();
   const listingCostInFlight = new Map();
   const titleToListingCache = new Map();
@@ -21,6 +20,8 @@
   let currentListingCost = null;
   let currentListingCurrency = "USD";
   let lastDomTitle = null;
+  let lastTimerText = null;
+  let saleAlreadyFired = false;
 
   function normalizeListingId(value) {
     if (typeof value === "number" && Number.isFinite(value)) return String(Math.trunc(value));
@@ -64,6 +65,13 @@
     } catch {
       return `${amount.toFixed(2)} ${code}`;
     }
+  }
+
+  function parseDomPrice(text) {
+    if (!text) return null;
+    const cleaned = text.replace(/[^0-9.]/g, "");
+    const num = parseFloat(cleaned);
+    return Number.isFinite(num) ? num : null;
   }
 
   /* ── UI ─────────────────────────────────────────────── */
@@ -172,7 +180,7 @@
     );
   }
 
-  function setSalePopup(saleTitle, saleAmount, costAmount, netAmount, diffAmount, currency, buyer) {
+  function setSalePopup(saleTitle, saleAmount, costAmount, netAmount, diffAmount, currency) {
     const el = getPopupElement();
     el.classList.remove("sale-profit", "sale-loss", "pulse");
     el.style.opacity = "1";
@@ -181,11 +189,10 @@
       `<div class="title">Sale Completed: ${saleTitle}</div>
        <div class="row"><span class="label">Sale</span><span>${formatMoney(saleAmount, currency)}</span></div>
        <div class="row"><span class="label">Cost</span><span>${typeof costAmount === "number" ? formatMoney(costAmount, currency) : "Not set"}</span></div>
-       <div class="row"><span class="label">Net (after 12%)</span><span>${formatMoney(netAmount, currency)}</span></div>
+       <div class="row"><span class="label">Net (after 15%)</span><span>${formatMoney(netAmount, currency)}</span></div>
        <div class="row"><span class="label">Profit</span><span class="${typeof diffAmount === "number" && diffAmount >= 0 ? "ok" : "bad"}">${
          typeof diffAmount === "number" ? formatMoney(diffAmount, currency) : "N/A"
-       }</span></div>
-       <div class="hint">${buyer ? `Buyer: @${buyer}` : "Sale captured"}</div>`;
+       }</span></div>`;
     const isProfit = typeof diffAmount === "number" && diffAmount >= 0;
     el.classList.add(isProfit ? "sale-profit" : "sale-loss");
     void el.offsetWidth;
@@ -241,16 +248,36 @@
     return result;
   }
 
-  /* ── DOM-based current item detection ──────────────── */
+  /* ── DOM selectors ─────────────────────────────────── */
 
-  const DOM_TITLE_SELECTOR = "#bottom-section-stream-container > div > div > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div > div > div:nth-child(1)";
+  const DOM_TITLE_SELECTOR = "#bottom-section-stream-container > div > div:nth-child(1) > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div > div > div:nth-child(1)";
+  const DOM_PRICE_SELECTOR = "#bottom-section-stream-container > div > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div:nth-child(1) > div:nth-child(2)";
+  const DOM_TIMER_SELECTOR = "#bottom-section-stream-container > div > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div:nth-child(2) > div:nth-child(2) > div:nth-child(2) > div";
 
   function getDomCurrentItemTitle() {
     const el = document.querySelector(DOM_TITLE_SELECTOR);
     if (!el) return null;
-    const text = (el.textContent || "").trim();
+    let text = "";
+    for (const child of el.childNodes) {
+      if (child.nodeType === 3) text += child.textContent;
+    }
+    text = text.trim();
     return text || null;
   }
+
+  function getDomPrice() {
+    const el = document.querySelector(DOM_PRICE_SELECTOR);
+    if (!el) return null;
+    return (el.textContent || "").trim() || null;
+  }
+
+  function getDomTimer() {
+    const el = document.querySelector(DOM_TIMER_SELECTOR);
+    if (!el) return null;
+    return (el.textContent || "").trim() || null;
+  }
+
+  /* ── Inventory cache ───────────────────────────────── */
 
   let inventoryLoaded = false;
   let inventoryLoading = false;
@@ -259,7 +286,6 @@
     const variables = {
       livestreamId: liveId,
       tab: "ACTIVE",
-      transactionTypes: ["AUCTION"],
       first: 100
     };
     if (after) variables.after = after;
@@ -311,8 +337,9 @@
           const numMatch = /^(\d+):/.exec(node.title);
           if (numMatch) {
             titleToListingCache.set(numMatch[1], node);
-            total++;
           }
+          titleToListingCache.set(node.title, node);
+          total++;
         }
         if (!page.hasNext || !page.cursor) break;
         cursor = page.cursor;
@@ -326,112 +353,40 @@
     }
   }
 
-
-  /* ── Sale processing ───────────────────────────────── */
-
-  function saleFromNode(node) {
-    const listing = node?.listing || {};
-    const saleAmountCents =
-      typeof node?.price?.amount === "number"
-        ? node.price.amount
-        : typeof listing?.price?.amount === "number"
-        ? listing.price.amount
-        : null;
-    const currency = node?.price?.currency || listing?.price?.currency || "USD";
-    const saleAmount = typeof saleAmountCents === "number" ? saleAmountCents / 100 : null;
-    return {
-      saleId: node?.id || null,
-      listingId: listing?.id || null,
-      title: listing?.title || listing?.subtitle || "Sale recorded",
-      buyer: node?.buyer?.username || null,
-      saleAmount,
-      currency
-    };
-  }
-
-  async function processNewSale(node) {
-    const sale = saleFromNode(node);
-    if (!sale.saleId || seenSaleIds.has(sale.saleId)) return;
-    seenSaleIds.add(sale.saleId);
-
-    const saleListingId = decodeRelayListingId(sale.listingId) || sale.listingId;
-    const cost = await fetchListingCost(saleListingId);
-    const net = typeof sale.saleAmount === "number" ? sale.saleAmount * FEE_MULTIPLIER : null;
-    const costAmount = cost ? cost.amountCents / 100 : null;
-
-    const effectiveCostAmount =
-      saleListingId && saleListingId === currentListingId && currentListingCost
-        ? currentListingCost.amountCents / 100
-        : costAmount;
-    const effectiveCurrency =
-      saleListingId && saleListingId === currentListingId && currentListingCurrency
-        ? currentListingCurrency
-        : cost?.currency || sale.currency || "USD";
-    const effectiveDiff =
-      typeof net === "number" && typeof effectiveCostAmount === "number" ? net - effectiveCostAmount : null;
-
-    console.log("[WN Profit] sale detected", {
-      title: sale.title?.slice(0, 60),
-      saleAmount: sale.saleAmount,
-      costCents: effectiveCostAmount != null ? effectiveCostAmount * 100 : null,
-      profit: effectiveDiff
-    });
-
-    setSalePopup(sale.title, sale.saleAmount, effectiveCostAmount, net, effectiveDiff, effectiveCurrency, sale.buyer);
-  }
-
   /* ── Polling ───────────────────────────────────────── */
 
-  async function fetchRecentSoldItems(liveId) {
-    const body = JSON.stringify({
-      operationName: "SoldAuditRecentSales",
-      variables: { liveId, first: 12 },
-      query: `
-        query SoldAuditRecentSales($liveId: ID!, $first: Int) {
-          liveShop(liveId: $liveId) {
-            soldItems(first: $first) {
-              edges {
-                node {
-                  id
-                  buyer { username }
-                  price { amount currency }
-                  listing { id title subtitle price { amount currency } }
-                }
-              }
-            }
-          }
-        }
-      `
-    });
-    const res = await fetch(GRAPHQL_URL, {
-      method: "POST",
-      credentials: "include",
-      cache: "no-store",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body
-    });
-    if (!res.ok) return [];
-    const json = await res.json().catch(() => null);
-    return json?.data?.liveShop?.soldItems?.edges || [];
-  }
+  function pollSale() {
+    const timerText = getDomTimer();
+    const isZero = timerText === "00:00" || timerText === "0:00";
+    const wasRunning = lastTimerText && lastTimerText !== "00:00" && lastTimerText !== "0:00";
 
-  async function pollSales(initial = false) {
-    if (!currentLiveId) return;
-    try {
-      const edges = await fetchRecentSoldItems(currentLiveId);
-      if (initial) {
-        for (const edge of edges) {
-          const saleId = edge?.node?.id;
-          if (saleId) seenSaleIds.add(saleId);
-        }
-        return;
-      }
-      for (let i = edges.length - 1; i >= 0; i -= 1) {
-        const node = edges[i]?.node;
-        if (node) void processNewSale(node);
-      }
-    } catch {
+    if (isZero && wasRunning && !saleAlreadyFired) {
+      saleAlreadyFired = true;
+      const priceText = getDomPrice();
+      const saleAmount = parseDomPrice(priceText);
+      const title = lastDomTitle || "Sale";
+      const costAmount = currentListingCost ? currentListingCost.amountCents / 100 : null;
+      const currency = currentListingCurrency || "USD";
+      const net = typeof saleAmount === "number" ? saleAmount * FEE_MULTIPLIER : null;
+      const diff = typeof net === "number" && typeof costAmount === "number" ? net - costAmount : null;
+
+      console.log("[WN Profit] sale detected (timer hit 00:00)", {
+        title: title?.slice(0, 60),
+        priceText,
+        saleAmount,
+        cost: costAmount,
+        net,
+        profit: diff
+      });
+
+      setSalePopup(title, saleAmount, costAmount, net, diff, currency);
     }
+
+    if (!isZero && timerText) {
+      saleAlreadyFired = false;
+    }
+
+    lastTimerText = timerText;
   }
 
   async function pollCurrentItem() {
@@ -440,17 +395,16 @@
       const domTitle = getDomCurrentItemTitle();
       if (!domTitle || domTitle === lastDomTitle) return;
       lastDomTitle = domTitle;
+      saleAlreadyFired = false;
 
       const numMatch = /^(\d+):/.exec(domTitle);
-      if (!numMatch) return;
-      const itemNum = numMatch[1];
+      const itemNum = numMatch ? numMatch[1] : null;
 
-      if (!titleToListingCache.has(itemNum)) {
-        console.log("[WN Profit] item not in inventory cache", { itemNum, cacheSize: titleToListingCache.size });
+      const cached = (itemNum && titleToListingCache.get(itemNum)) || titleToListingCache.get(domTitle);
+      if (!cached) {
+        console.log("[WN Profit] item not in inventory cache", { domTitle: domTitle.slice(0, 60), itemNum, cacheSize: titleToListingCache.size });
         return;
       }
-
-      const cached = titleToListingCache.get(itemNum);
       const listingId = decodeRelayListingId(cached.id);
       if (!listingId) return;
 
@@ -461,7 +415,6 @@
       setCurrentItemPopup(domTitle, cost);
       console.log("[WN Profit] item changed", {
         domText: domTitle.slice(0, 80),
-        cachedTitle: cached.title?.slice(0, 80),
         itemNum,
         listingId,
         cost: cost?.amountCents ?? null
@@ -470,13 +423,9 @@
     }
   }
 
-  async function pollTick(initial = false) {
-    if (initial) {
-      await pollSales(true);
-      await pollCurrentItem();
-      return;
-    }
-    await Promise.all([pollSales(false), pollCurrentItem()]);
+  function pollTick() {
+    pollSale();
+    void pollCurrentItem();
   }
 
   function clearPolling() {
@@ -488,12 +437,13 @@
 
   function startPollingForLive(liveId) {
     clearPolling();
-    seenSaleIds.clear();
     listingCostCache.clear();
     titleToListingCache.clear();
     inventoryLoaded = false;
     inventoryLoading = false;
     lastDomTitle = null;
+    lastTimerText = null;
+    saleAlreadyFired = false;
     currentLiveId = liveId;
     if (!currentLiveId) {
       setStatusPopup("Waiting for live stream", "Open a Whatnot live stream page to start tracking.");
@@ -503,8 +453,7 @@
     void buildInventoryCache(currentLiveId).then(() => {
       setStatusPopup("Live detected", `Livestream: ${currentLiveId.slice(0, 8)}... — ${titleToListingCache.size} items loaded`);
     });
-    void pollTick(true);
-    pollTimer = window.setInterval(() => void pollTick(false), POLL_MS);
+    pollTimer = window.setInterval(pollTick, POLL_MS);
   }
 
   /* ── Page bridge (live ID detection from network) ──── */
