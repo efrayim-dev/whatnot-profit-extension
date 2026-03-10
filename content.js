@@ -30,6 +30,67 @@
   let auctionStartTime = null;
   let lastSaleTime = null;
   let panelVisible = false;
+  let settingsVisible = false;
+  let webhookUrl = "";
+  let sheetsConnected = false;
+
+  function loadWebhookUrl() {
+    if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
+      chrome.runtime.sendMessage({ type: "GET_WEBHOOK_URL" }, (resp) => {
+        if (resp?.url) {
+          webhookUrl = resp.url;
+          sheetsConnected = true;
+          console.log("[WN Profit] Sheets webhook loaded");
+        }
+      });
+    }
+  }
+
+  function saveWebhookUrl(url) {
+    webhookUrl = url;
+    sheetsConnected = !!url;
+    if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
+      chrome.runtime.sendMessage({ type: "SET_WEBHOOK_URL", url });
+    }
+  }
+
+  function syncSaleToSheets(entry) {
+    if (!webhookUrl || typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return;
+    const payload = {
+      ...entry,
+      sessionId: session ? `${session.liveId}-${session.startedAt}` : ""
+    };
+    chrome.runtime.sendMessage({ type: "SYNC_SALE", payload }, (resp) => {
+      if (resp?.ok) {
+        console.log("[WN Profit] sale synced to Sheets");
+      } else {
+        console.log("[WN Profit] Sheets sync failed:", resp?.error);
+      }
+    });
+  }
+
+  function syncSessionSummary() {
+    if (!webhookUrl || !session || typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return;
+    const payload = {
+      type: "session_summary",
+      sessionId: `${session.liveId}-${session.startedAt}`,
+      startedAt: session.startedAt,
+      totalSales: session.sales.length,
+      totalRevenue: session.totalRevenue,
+      totalCost: session.totalCost,
+      totalNet: session.totalNet,
+      totalProfit: session.totalProfit,
+      avgAuction: avg(session.auctionDurations),
+      avgGap: avg(session.gapDurations)
+    };
+    chrome.runtime.sendMessage({ type: "SYNC_SESSION_SUMMARY", payload }, (resp) => {
+      if (resp?.ok) {
+        console.log("[WN Profit] session summary synced to Sheets");
+      } else {
+        console.log("[WN Profit] session summary sync failed:", resp?.error);
+      }
+    });
+  }
 
   function newSession(liveId) {
     return {
@@ -73,6 +134,7 @@
     if (typeof entry.auctionDuration === "number") session.auctionDurations.push(entry.auctionDuration);
     if (typeof entry.gapFromLast === "number") session.gapDurations.push(entry.gapFromLast);
     saveSession();
+    syncSaleToSheets(entry);
   }
 
   function formatDuration(ms) {
@@ -369,6 +431,77 @@
         opacity: 0.7;
         margin-top: 2px;
       }
+      .wn-analytics-panel .sheets-bar {
+        padding: 8px 14px;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 11px;
+      }
+      .wn-analytics-panel .sheets-bar .sync-status {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .wn-analytics-panel .sheets-bar .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        display: inline-block;
+      }
+      .wn-analytics-panel .sheets-bar .dot.on { background: #86efac; }
+      .wn-analytics-panel .sheets-bar .dot.off { background: #fda4af; }
+      .wn-analytics-panel .settings-section {
+        padding: 12px 14px;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+      }
+      .wn-analytics-panel .settings-section label {
+        display: block;
+        font-size: 11px;
+        font-weight: 600;
+        margin-bottom: 6px;
+        opacity: 0.8;
+      }
+      .wn-analytics-panel .settings-section input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        background: rgba(30, 41, 59, 0.7);
+        color: #e2e8f0;
+        font-size: 11px;
+        font-family: monospace;
+        outline: none;
+      }
+      .wn-analytics-panel .settings-section input:focus {
+        border-color: rgba(99, 102, 241, 0.6);
+      }
+      .wn-analytics-panel .settings-section .settings-actions {
+        margin-top: 8px;
+        display: flex;
+        gap: 8px;
+      }
+      .wn-analytics-panel .settings-section button {
+        background: rgba(99, 102, 241, 0.25);
+        border: 1px solid rgba(99, 102, 241, 0.4);
+        color: #c7d2fe;
+        border-radius: 6px;
+        padding: 4px 12px;
+        font-size: 11px;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      .wn-analytics-panel .settings-section button:hover {
+        background: rgba(99, 102, 241, 0.4);
+      }
+      .wn-analytics-panel .settings-section .hint {
+        margin-top: 8px;
+        font-size: 10px;
+        opacity: 0.5;
+        line-height: 1.5;
+      }
     `;
     (document.head || document.documentElement).appendChild(style);
   }
@@ -490,8 +623,15 @@
         <div>
           ${isViewing ? `<button onclick="document.getElementById('wn-analytics-panel').__wnBack()">Back</button>` : ""}
           <button onclick="document.getElementById('wn-analytics-panel').__wnExport()">Export CSV</button>
+          ${!isViewing ? `<button onclick="document.getElementById('wn-analytics-panel').__wnSettings()" title="Google Sheets settings">\u2699</button>` : ""}
         </div>
       </div>
+      <div class="sheets-bar">
+        <div class="sync-status">
+          <span class="dot ${sheetsConnected ? "on" : "off"}"></span>
+          <span>Google Sheets: ${sheetsConnected ? "Connected" : "Not connected"}</span>
+        </div>
+      </div>`;
       <div class="stats-grid">
         <div class="stat-box">
           <div class="stat-label">Sales</div>
@@ -552,7 +692,12 @@
 
     panel.__wnExport = () => exportCsv(s);
     panel.__wnBack = () => renderPanel();
+    panel.__wnSettings = () => {
+      settingsVisible = !settingsVisible;
+      renderSettingsSection(panel);
+    };
 
+    if (settingsVisible && !isViewing) renderSettingsSection(panel);
     if (!isViewing) renderPastSessions(panel);
   }
 
@@ -582,6 +727,77 @@
         renderPanel(past[idx]);
       });
     });
+  }
+
+  function renderSettingsSection(panel) {
+    let section = panel.querySelector(".settings-section");
+    if (!settingsVisible) {
+      if (section) section.remove();
+      return;
+    }
+    if (section) return;
+    const sheetsBar = panel.querySelector(".sheets-bar");
+    if (!sheetsBar) return;
+
+    section = document.createElement("div");
+    section.className = "settings-section";
+    section.innerHTML = `
+      <label>Google Sheets Webhook URL</label>
+      <input type="text" placeholder="https://script.google.com/macros/s/.../exec" value="${escHtml(webhookUrl)}" />
+      <div class="settings-actions">
+        <button class="save-btn">Save</button>
+        <button class="test-btn">Test</button>
+        ${webhookUrl ? `<button class="sync-btn">Sync Session</button>` : ""}
+      </div>
+      <div class="hint">
+        To set up: go to script.google.com, create a new project, paste the code from
+        google-apps-script.js, deploy as Web App, and paste the URL above.
+      </div>
+      <div class="settings-msg" style="margin-top:6px;font-size:11px;"></div>
+    `;
+    sheetsBar.insertAdjacentElement("afterend", section);
+
+    const input = section.querySelector("input");
+    const msgEl = section.querySelector(".settings-msg");
+
+    section.querySelector(".save-btn").addEventListener("click", () => {
+      saveWebhookUrl(input.value.trim());
+      msgEl.textContent = "Saved!";
+      msgEl.style.color = "#86efac";
+      renderPanel();
+    });
+
+    section.querySelector(".test-btn").addEventListener("click", () => {
+      const url = input.value.trim();
+      if (!url) { msgEl.textContent = "Enter a URL first"; msgEl.style.color = "#fda4af"; return; }
+      msgEl.textContent = "Testing...";
+      msgEl.style.color = "#e2e8f0";
+      if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
+        chrome.runtime.sendMessage({
+          type: "SYNC_SALE",
+          payload: { timestamp: Date.now(), title: "Test Sale", saleAmount: 10, costAmount: 5, netAmount: 8.5, profit: 3.5, currency: "USD", auctionDuration: 15000, gapFromLast: 5000, sessionId: "test" }
+        }, (resp) => {
+          if (resp?.ok) {
+            saveWebhookUrl(url);
+            msgEl.textContent = "Connected! Test row added to your sheet.";
+            msgEl.style.color = "#86efac";
+            renderPanel();
+          } else {
+            msgEl.textContent = "Failed: " + (resp?.error || "unknown error");
+            msgEl.style.color = "#fda4af";
+          }
+        });
+      }
+    });
+
+    const syncBtn = section.querySelector(".sync-btn");
+    if (syncBtn) {
+      syncBtn.addEventListener("click", () => {
+        syncSessionSummary();
+        msgEl.textContent = "Session summary synced!";
+        msgEl.style.color = "#86efac";
+      });
+    }
   }
 
   function exportCsv(s) {
@@ -895,6 +1111,7 @@
     currentLiveId = liveId;
 
     if (!currentLiveId) {
+      if (session && session.sales.length > 0) syncSessionSummary();
       session = null;
       setStatusPopup("Waiting for live stream", "Open a Whatnot live stream page to start tracking.");
       return;
@@ -1023,6 +1240,7 @@
   installPageGraphqlBridge();
   installNavigationHooks();
   getToggleButton();
+  loadWebhookUrl();
   console.log("[WN Profit] content script loaded (analytics branch)", location.href);
   setStatusPopup("Loaded", `Extension v${EXT_VERSION} (analytics) injected`);
   if (document.readyState === "loading") {

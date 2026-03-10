@@ -1,12 +1,19 @@
 {
   "manifest_version": 3,
   "name": "Whatnot Profit & Cost Alerts (Analytics)",
-  "version": "3.0.0",
-  "description": "Full session analytics: sale history, auction timing, profit tracking with 15% fee on Whatnot.",
-  "permissions": [],
-  "host_permissions": [
-    "https://www.whatnot.com/*"
+  "version": "3.1.0",
+  "description": "Full session analytics with Google Sheets sync: sale history, auction timing, profit tracking with 15% fee on Whatnot.",
+  "permissions": [
+    "storage"
   ],
+  "host_permissions": [
+    "https://www.whatnot.com/*",
+    "https://script.google.com/*",
+    "https://script.googleusercontent.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
       "matches": [
