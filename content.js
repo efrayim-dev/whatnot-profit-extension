@@ -7,6 +7,7 @@
   const LIVE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const FEE_MULTIPLIER = 0.85;
   const POLL_MS = 1000;
+  const STORAGE_KEY = "wn_profit_sessions";
 
   const listingCostCache = new Map();
   const listingCostInFlight = new Map();
@@ -22,6 +23,72 @@
   let lastDomTitle = null;
   let lastTimerText = null;
   let saleAlreadyFired = false;
+
+  /* ── Analytics state ─────────────────────────────────── */
+
+  let session = null;
+  let auctionStartTime = null;
+  let lastSaleTime = null;
+  let panelVisible = false;
+
+  function newSession(liveId) {
+    return {
+      liveId,
+      startedAt: Date.now(),
+      sales: [],
+      totalRevenue: 0,
+      totalCost: 0,
+      totalProfit: 0,
+      totalNet: 0,
+      auctionDurations: [],
+      gapDurations: []
+    };
+  }
+
+  function saveSession() {
+    if (!session) return;
+    try {
+      const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+      const idx = stored.findIndex(s => s.liveId === session.liveId && s.startedAt === session.startedAt);
+      if (idx >= 0) stored[idx] = session;
+      else stored.push(session);
+      if (stored.length > 50) stored.splice(0, stored.length - 50);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
+    } catch {}
+  }
+
+  function loadPastSessions() {
+    try {
+      return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    } catch { return []; }
+  }
+
+  function recordSale(entry) {
+    if (!session) return;
+    session.sales.push(entry);
+    if (typeof entry.saleAmount === "number") session.totalRevenue += entry.saleAmount;
+    if (typeof entry.costAmount === "number") session.totalCost += entry.costAmount;
+    if (typeof entry.netAmount === "number") session.totalNet += entry.netAmount;
+    if (typeof entry.profit === "number") session.totalProfit += entry.profit;
+    if (typeof entry.auctionDuration === "number") session.auctionDurations.push(entry.auctionDuration);
+    if (typeof entry.gapFromLast === "number") session.gapDurations.push(entry.gapFromLast);
+    saveSession();
+  }
+
+  function formatDuration(ms) {
+    if (typeof ms !== "number" || ms < 0) return "—";
+    const totalSec = Math.round(ms / 1000);
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    return m > 0 ? `${m}m ${s}s` : `${s}s`;
+  }
+
+  function avg(arr) {
+    if (!arr.length) return null;
+    return arr.reduce((a, b) => a + b, 0) / arr.length;
+  }
+
+  /* ── Helpers ─────────────────────────────────────────── */
 
   function normalizeListingId(value) {
     if (typeof value === "number" && Number.isFinite(value)) return String(Math.trunc(value));
@@ -72,6 +139,10 @@
     const cleaned = text.replace(/[^0-9.]/g, "");
     const num = parseFloat(cleaned);
     return Number.isFinite(num) ? num : null;
+  }
+
+  function escHtml(str) {
+    return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
   /* ── UI ─────────────────────────────────────────────── */
@@ -138,6 +209,166 @@
       .wn-profit-toast.pulse {
         animation: wn-pulse 0.8s ease-in-out;
       }
+
+      /* ── Analytics panel ── */
+      .wn-analytics-toggle {
+        position: fixed;
+        left: 16px;
+        top: 16px;
+        z-index: 2147483646;
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        background: rgba(15, 23, 42, 0.92);
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        color: #e2e8f0;
+        font-size: 18px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        backdrop-filter: blur(6px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        transition: transform 0.15s;
+      }
+      .wn-analytics-toggle:hover { transform: scale(1.1); }
+
+      .wn-analytics-panel {
+        position: fixed;
+        left: 16px;
+        top: 60px;
+        z-index: 2147483646;
+        width: min(400px, calc(100vw - 32px));
+        max-height: calc(100vh - 80px);
+        border-radius: 12px;
+        background: rgba(15, 23, 42, 0.97);
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55);
+        color: #e2e8f0;
+        font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        backdrop-filter: blur(8px);
+        overflow-y: auto;
+        display: none;
+      }
+      .wn-analytics-panel.open { display: block; }
+      .wn-analytics-panel .panel-header {
+        padding: 12px 14px;
+        font-weight: 700;
+        font-size: 14px;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        position: sticky;
+        top: 0;
+        background: rgba(15, 23, 42, 0.97);
+        backdrop-filter: blur(8px);
+      }
+      .wn-analytics-panel .panel-header button {
+        background: rgba(99, 102, 241, 0.25);
+        border: 1px solid rgba(99, 102, 241, 0.4);
+        color: #c7d2fe;
+        border-radius: 6px;
+        padding: 4px 10px;
+        font-size: 11px;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      .wn-analytics-panel .panel-header button:hover {
+        background: rgba(99, 102, 241, 0.4);
+      }
+      .wn-analytics-panel .stats-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        padding: 12px 14px;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+      }
+      .wn-analytics-panel .stat-box {
+        background: rgba(30, 41, 59, 0.7);
+        border-radius: 8px;
+        padding: 8px 10px;
+      }
+      .wn-analytics-panel .stat-label {
+        font-size: 10px;
+        opacity: 0.65;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 2px;
+      }
+      .wn-analytics-panel .stat-value {
+        font-size: 16px;
+        font-weight: 700;
+      }
+      .wn-analytics-panel .stat-value.ok { color: #86efac; }
+      .wn-analytics-panel .stat-value.bad { color: #fda4af; }
+      .wn-analytics-panel .sale-list {
+        padding: 8px 14px 14px;
+      }
+      .wn-analytics-panel .sale-list-title {
+        font-weight: 700;
+        font-size: 13px;
+        margin-bottom: 8px;
+        opacity: 0.9;
+      }
+      .wn-analytics-panel .sale-entry {
+        background: rgba(30, 41, 59, 0.5);
+        border-radius: 8px;
+        padding: 8px 10px;
+        margin-bottom: 6px;
+        border-left: 3px solid rgba(148, 163, 184, 0.3);
+      }
+      .wn-analytics-panel .sale-entry.profit { border-left-color: #86efac; }
+      .wn-analytics-panel .sale-entry.loss { border-left-color: #fda4af; }
+      .wn-analytics-panel .sale-entry .sale-name {
+        font-weight: 700;
+        font-size: 12px;
+        margin-bottom: 3px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .wn-analytics-panel .sale-entry .sale-row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        opacity: 0.85;
+      }
+      .wn-analytics-panel .sale-entry .sale-meta {
+        font-size: 10px;
+        opacity: 0.55;
+        margin-top: 3px;
+      }
+      .wn-analytics-panel .empty-state {
+        padding: 24px 14px;
+        text-align: center;
+        opacity: 0.5;
+        font-size: 12px;
+      }
+      .wn-analytics-panel .past-sessions {
+        padding: 8px 14px 14px;
+        border-top: 1px solid rgba(148, 163, 184, 0.15);
+      }
+      .wn-analytics-panel .past-session-entry {
+        background: rgba(30, 41, 59, 0.4);
+        border-radius: 8px;
+        padding: 8px 10px;
+        margin-bottom: 6px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .wn-analytics-panel .past-session-entry:hover {
+        background: rgba(30, 41, 59, 0.7);
+      }
+      .wn-analytics-panel .past-session-entry .ps-date {
+        font-weight: 700;
+        font-size: 11px;
+      }
+      .wn-analytics-panel .past-session-entry .ps-stats {
+        font-size: 10px;
+        opacity: 0.7;
+        margin-top: 2px;
+      }
     `;
     (document.head || document.documentElement).appendChild(style);
   }
@@ -186,7 +417,7 @@
     el.style.opacity = "1";
     el.style.transition = "";
     el.innerHTML =
-      `<div class="title">Sale Completed: ${saleTitle}</div>
+      `<div class="title">Sale Completed: ${escHtml(saleTitle)}</div>
        <div class="row"><span class="label">Sale</span><span>${formatMoney(saleAmount, currency)}</span></div>
        <div class="row"><span class="label">Cost</span><span>${typeof costAmount === "number" ? formatMoney(costAmount, currency) : "Not set"}</span></div>
        <div class="row"><span class="label">Net (after 15%)</span><span>${formatMoney(netAmount, currency)}</span></div>
@@ -197,6 +428,196 @@
     el.classList.add(isProfit ? "sale-profit" : "sale-loss");
     void el.offsetWidth;
     el.classList.add("pulse");
+  }
+
+  /* ── Analytics panel UI ──────────────────────────────── */
+
+  function getToggleButton() {
+    ensureToastStyles();
+    let btn = document.getElementById("wn-analytics-toggle");
+    if (!btn) {
+      btn = document.createElement("div");
+      btn.id = "wn-analytics-toggle";
+      btn.className = "wn-analytics-toggle";
+      btn.textContent = "\u{1F4CA}";
+      btn.title = "Toggle analytics panel";
+      btn.addEventListener("click", togglePanel);
+      document.documentElement.appendChild(btn);
+    }
+    return btn;
+  }
+
+  function getAnalyticsPanel() {
+    ensureToastStyles();
+    let panel = document.getElementById("wn-analytics-panel");
+    if (!panel) {
+      panel = document.createElement("div");
+      panel.id = "wn-analytics-panel";
+      panel.className = "wn-analytics-panel";
+      document.documentElement.appendChild(panel);
+    }
+    return panel;
+  }
+
+  function togglePanel() {
+    panelVisible = !panelVisible;
+    const panel = getAnalyticsPanel();
+    panel.classList.toggle("open", panelVisible);
+    if (panelVisible) renderPanel();
+  }
+
+  function renderPanel(viewSession) {
+    const panel = getAnalyticsPanel();
+    const s = viewSession || session;
+    if (!s) {
+      panel.innerHTML = `
+        <div class="panel-header"><span>Session Analytics</span></div>
+        <div class="empty-state">No active session. Start a live stream to begin tracking.</div>`;
+      renderPastSessions(panel);
+      return;
+    }
+
+    const elapsed = Date.now() - s.startedAt;
+    const saleCount = s.sales.length;
+    const avgDuration = avg(s.auctionDurations);
+    const avgGap = avg(s.gapDurations);
+    const profitClass = s.totalProfit >= 0 ? "ok" : "bad";
+    const isViewing = viewSession && viewSession !== session;
+
+    let html = `
+      <div class="panel-header">
+        <span>${isViewing ? "Past Session" : "Session Analytics"}</span>
+        <div>
+          ${isViewing ? `<button onclick="document.getElementById('wn-analytics-panel').__wnBack()">Back</button>` : ""}
+          <button onclick="document.getElementById('wn-analytics-panel').__wnExport()">Export CSV</button>
+        </div>
+      </div>
+      <div class="stats-grid">
+        <div class="stat-box">
+          <div class="stat-label">Sales</div>
+          <div class="stat-value">${saleCount}</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Total Profit</div>
+          <div class="stat-value ${profitClass}">${formatMoney(s.totalProfit, "USD")}</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Revenue</div>
+          <div class="stat-value">${formatMoney(s.totalRevenue, "USD")}</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Total Cost</div>
+          <div class="stat-value">${formatMoney(s.totalCost, "USD")}</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Avg Auction</div>
+          <div class="stat-value">${formatDuration(avgDuration)}</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Avg Gap</div>
+          <div class="stat-value">${formatDuration(avgGap)}</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Session Time</div>
+          <div class="stat-value">${formatDuration(elapsed)}</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Net (after 15%)</div>
+          <div class="stat-value">${formatMoney(s.totalNet, "USD")}</div>
+        </div>
+      </div>
+      <div class="sale-list">
+        <div class="sale-list-title">Sale History (${saleCount})</div>`;
+
+    if (!saleCount) {
+      html += `<div class="empty-state">No sales yet this session.</div>`;
+    } else {
+      for (let i = s.sales.length - 1; i >= 0; i--) {
+        const e = s.sales[i];
+        const pClass = typeof e.profit === "number" && e.profit >= 0 ? "profit" : "loss";
+        const time = new Date(e.timestamp).toLocaleTimeString();
+        html += `
+          <div class="sale-entry ${pClass}">
+            <div class="sale-name">#${i + 1} — ${escHtml(e.title || "Sale")}</div>
+            <div class="sale-row"><span>Sale</span><span>${formatMoney(e.saleAmount, e.currency)}</span></div>
+            <div class="sale-row"><span>Cost</span><span>${typeof e.costAmount === "number" ? formatMoney(e.costAmount, e.currency) : "Not set"}</span></div>
+            <div class="sale-row"><span>Net</span><span>${formatMoney(e.netAmount, e.currency)}</span></div>
+            <div class="sale-row"><span>Profit</span><span class="${pClass === "profit" ? "ok" : "bad"}">${typeof e.profit === "number" ? formatMoney(e.profit, e.currency) : "N/A"}</span></div>
+            <div class="sale-meta">${time} · Auction: ${formatDuration(e.auctionDuration)} · Gap: ${formatDuration(e.gapFromLast)}</div>
+          </div>`;
+      }
+    }
+    html += `</div>`;
+    panel.innerHTML = html;
+
+    panel.__wnExport = () => exportCsv(s);
+    panel.__wnBack = () => renderPanel();
+
+    if (!isViewing) renderPastSessions(panel);
+  }
+
+  function renderPastSessions(panel) {
+    const past = loadPastSessions().filter(
+      s => !(session && s.liveId === session.liveId && s.startedAt === session.startedAt)
+    );
+    if (!past.length) return;
+
+    let html = `<div class="past-sessions"><div class="sale-list-title">Past Sessions</div>`;
+    for (let i = past.length - 1; i >= 0; i--) {
+      const s = past[i];
+      const d = new Date(s.startedAt).toLocaleString();
+      const profitClass = s.totalProfit >= 0 ? "ok" : "bad";
+      html += `
+        <div class="past-session-entry" data-idx="${i}">
+          <div class="ps-date">${d}</div>
+          <div class="ps-stats">${s.sales.length} sales · Profit: <span class="${profitClass}">${formatMoney(s.totalProfit, "USD")}</span> · Revenue: ${formatMoney(s.totalRevenue, "USD")}</div>
+        </div>`;
+    }
+    html += `</div>`;
+    panel.insertAdjacentHTML("beforeend", html);
+
+    panel.querySelectorAll(".past-session-entry").forEach(el => {
+      el.addEventListener("click", () => {
+        const idx = parseInt(el.dataset.idx, 10);
+        renderPanel(past[idx]);
+      });
+    });
+  }
+
+  function exportCsv(s) {
+    if (!s || !s.sales.length) return;
+    const rows = [["#", "Time", "Item", "Sale", "Cost", "Net", "Profit", "Auction Duration (s)", "Gap (s)"]];
+    s.sales.forEach((e, i) => {
+      rows.push([
+        i + 1,
+        new Date(e.timestamp).toLocaleString(),
+        `"${(e.title || "").replace(/"/g, '""')}"`,
+        e.saleAmount ?? "",
+        e.costAmount ?? "",
+        e.netAmount ?? "",
+        e.profit ?? "",
+        typeof e.auctionDuration === "number" ? Math.round(e.auctionDuration / 1000) : "",
+        typeof e.gapFromLast === "number" ? Math.round(e.gapFromLast / 1000) : ""
+      ]);
+    });
+    rows.push([]);
+    rows.push(["Summary"]);
+    rows.push(["Total Sales", s.sales.length]);
+    rows.push(["Total Revenue", s.totalRevenue]);
+    rows.push(["Total Cost", s.totalCost]);
+    rows.push(["Total Net", s.totalNet]);
+    rows.push(["Total Profit", s.totalProfit]);
+    rows.push(["Avg Auction", typeof avg(s.auctionDurations) === "number" ? Math.round(avg(s.auctionDurations) / 1000) + "s" : ""]);
+    rows.push(["Avg Gap", typeof avg(s.gapDurations) === "number" ? Math.round(avg(s.gapDurations) / 1000) + "s" : ""]);
+
+    const csv = rows.map(r => r.join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `whatnot-session-${new Date(s.startedAt).toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   /* ── Cost fetching ─────────────────────────────────── */
@@ -362,6 +783,7 @@
 
     if (isZero && wasRunning && !saleAlreadyFired) {
       saleAlreadyFired = true;
+      const now = Date.now();
       const priceText = getDomPrice();
       const saleAmount = parseDomPrice(priceText);
       const title = lastDomTitle || "Sale";
@@ -370,16 +792,40 @@
       const net = typeof saleAmount === "number" ? saleAmount * FEE_MULTIPLIER : null;
       const diff = typeof net === "number" && typeof costAmount === "number" ? net - costAmount : null;
 
+      const auctionDuration = auctionStartTime ? now - auctionStartTime : null;
+      const gapFromLast = lastSaleTime ? (auctionStartTime || now) - lastSaleTime : null;
+      lastSaleTime = now;
+      auctionStartTime = null;
+
       console.log("[WN Profit] sale detected (timer hit 00:00)", {
         title: title?.slice(0, 60),
         priceText,
         saleAmount,
         cost: costAmount,
         net,
-        profit: diff
+        profit: diff,
+        auctionDuration,
+        gapFromLast
+      });
+
+      recordSale({
+        timestamp: now,
+        title,
+        saleAmount,
+        costAmount,
+        netAmount: net,
+        profit: diff,
+        currency,
+        auctionDuration,
+        gapFromLast
       });
 
       setSalePopup(title, saleAmount, costAmount, net, diff, currency);
+      if (panelVisible) renderPanel();
+    }
+
+    if (!isZero && timerText && !auctionStartTime) {
+      auctionStartTime = Date.now();
     }
 
     if (!isZero && timerText) {
@@ -444,11 +890,19 @@
     lastDomTitle = null;
     lastTimerText = null;
     saleAlreadyFired = false;
+    auctionStartTime = null;
+    lastSaleTime = null;
     currentLiveId = liveId;
+
     if (!currentLiveId) {
+      session = null;
       setStatusPopup("Waiting for live stream", "Open a Whatnot live stream page to start tracking.");
       return;
     }
+
+    session = newSession(currentLiveId);
+    saveSession();
+
     setStatusPopup("Live detected", `Livestream: ${currentLiveId.slice(0, 8)}... — loading inventory`);
     void buildInventoryCache(currentLiveId).then(() => {
       setStatusPopup("Live detected", `Livestream: ${currentLiveId.slice(0, 8)}... — ${titleToListingCache.size} items loaded`);
@@ -568,8 +1022,9 @@
 
   installPageGraphqlBridge();
   installNavigationHooks();
-  console.log("[WN Profit] content script loaded", location.href);
-  setStatusPopup("Loaded", `Extension v${EXT_VERSION} injected`);
+  getToggleButton();
+  console.log("[WN Profit] content script loaded (analytics branch)", location.href);
+  setStatusPopup("Loaded", `Extension v${EXT_VERSION} (analytics) injected`);
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", updateLiveFromLocation, { once: true });
   } else {

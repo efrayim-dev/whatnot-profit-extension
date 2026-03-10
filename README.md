@@ -1,14 +1,25 @@
-# Whatnot Profit & Cost Alerts
+# Whatnot Profit & Cost Alerts (Analytics)
 
-Chrome/Opera extension that:
+Full-featured Chrome/Opera extension for Whatnot livestream sellers.
 
-- Shows a popup when a new sale is detected on a Whatnot livestream.
-- Calculates:
-  - sale price
-  - item cost
-  - net after 15% fee
-  - difference (`net - cost`)
-- Shows a popup when a listing/auction item loads, with current item cost.
+## Features
+
+- **Sale alerts** — green popup + pulse for profit, red for loss (after 15% fee)
+- **Item cost on load** — shows cost when a new item is pinned/started
+- **Auction duration tracking** — records how long each auction took from start to sale
+- **Gap tracking** — time between each sale and the next auction start
+- **Session analytics panel** — click the chart icon to open:
+  - Total sales, revenue, cost, net, profit
+  - Average auction duration and gap
+  - Session elapsed time
+  - Full sale-by-sale history with timestamps and timing
+- **Past sessions** — view previous session summaries (stored in localStorage)
+- **CSV export** — download any session's data as a spreadsheet
+
+## Branches
+
+- `master` — simple version (cost + sale alerts only)
+- `analytics` — this branch (full session tracking)
 
 ## Install locally
 
@@ -19,6 +30,7 @@ Chrome/Opera extension that:
 
 ## Notes
 
-- The extension reads Whatnot GraphQL traffic and polls sold items while you are on a live stream URL.
+- The extension reads Whatnot GraphQL traffic and DOM elements while you are on a live stream URL.
 - Item costs are fetched from the Whatnot inventory page for each listing ID.
+- Session data is stored in `localStorage` (persists across page refreshes, up to 50 sessions).
 - If a cost is not set for an item, the popup will say `Not set`.
