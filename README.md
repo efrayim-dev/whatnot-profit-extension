@@ -1,28 +1,26 @@
 # Whatnot Profit & Cost Alerts (Analytics)
 
-Full-featured Chrome/Opera extension for Whatnot livestream sellers.
+Full-featured Chrome/Opera extension for Whatnot livestream sellers, with optional cloud server for 24/7 tracking.
 
 ## Features
 
 - **Sale alerts** — green popup + pulse for profit, red for loss (after 15% fee)
 - **Item cost on load** — shows cost when a new item is pinned/started
-- **Auction duration tracking** — records how long each auction took from start to sale
+- **Bid count tracking** — captures bids per auction
+- **Auction duration tracking** — records how long each auction took
 - **Gap tracking** — time between each sale and the next auction start
-- **Session analytics panel** — click the chart icon to open:
-  - Total sales, revenue, cost, net, profit
-  - Average auction duration and gap
-  - Session elapsed time
-  - Full sale-by-sale history with timestamps and timing
-- **Google Sheets sync** — every sale automatically saved to a Google Sheet
-- **Past sessions** — view previous session summaries (stored in localStorage)
-- **CSV export** — download any session's data as a spreadsheet
+- **Chat message log** — every chat message saved to Google Sheets
+- **Session analytics panel** — full stats, sale history, past sessions
+- **Google Sheets sync** — all data auto-saved to a spreadsheet
+- **CSV export** — download any session as a spreadsheet
+- **Cloud server** — runs headless on a VPS so you don't need a tab open
 
 ## Branches
 
 - `master` — simple version (cost + sale alerts only)
-- `analytics` — this branch (full session tracking + Google Sheets)
+- `analytics` — this branch (full tracking + Sheets + server)
 
-## Install extension
+## Install extension locally
 
 1. Open `chrome://extensions` (or `opera://extensions`).
 2. Enable **Developer mode**.
@@ -33,23 +31,93 @@ Full-featured Chrome/Opera extension for Whatnot livestream sellers.
 
 1. Go to [script.google.com](https://script.google.com)
 2. Click **New project**
-3. Delete the default code
-4. Open `google-apps-script.js` from this folder and copy all the code
-5. Paste it into the Apps Script editor
-6. Click **Deploy** > **New deployment**
-7. Set type to **Web app**
-8. Set "Execute as" to **Me**
-9. Set "Who has access" to **Anyone**
-10. Click **Deploy** and authorize when prompted
-11. Copy the **Web App URL**
-12. In the extension, click the chart icon to open the analytics panel
-13. Click the gear icon, paste the URL, and click **Test**
-14. You should see "Connected! Test row added to your sheet."
+3. Paste the code from `google-apps-script.js`
+4. Deploy as **Web app** (Execute as: Me, Access: Anyone)
+5. Copy the URL, paste in extension settings (gear icon in analytics panel)
 
-The extension will now auto-sync every sale to your Google Sheet. A "Sessions" tab tracks session summaries, and the "Sales" tab logs every individual sale.
+## Cloud server setup (optional — for 24/7 tracking)
+
+This runs a headless browser on a VPS so sales are tracked even when your computer is off.
+
+### Option A: Docker (recommended)
+
+1. Get a VPS ($5/month — DigitalOcean, Hetzner, Vultr, etc.)
+2. SSH into the server and install Docker
+3. Clone the repo:
+   ```
+   git clone https://github.com/efrayim-dev/whatnot-profit-extension.git
+   cd whatnot-profit-extension
+   git checkout analytics
+   ```
+4. Build and run:
+   ```
+   cd server
+   docker compose up -d
+   ```
+5. The API runs on port 3000.
+
+### Option B: Direct Node.js
+
+1. Install Node.js 20+ and Chromium on the server
+2. Clone the repo and checkout `analytics`
+3. Install dependencies:
+   ```
+   cd server
+   npm install
+   ```
+4. First time — log in to Whatnot (requires a display, or use VNC):
+   ```
+   npm run login
+   ```
+   This opens a real browser. Log in, then close it. Session is saved.
+5. Start the server:
+   ```
+   npm start
+   ```
+
+### Server API
+
+Once running, control it via HTTP:
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/status` | GET | Current status (watching, idle, uptime) |
+| `/watch` | POST | Start watching a stream. Body: `{ "url": "https://www.whatnot.com/live/..." }` |
+| `/stop` | POST | Stop watching |
+| `/screenshot` | GET | JPEG screenshot of current page |
+
+**Example — start watching a show:**
+```
+curl -X POST http://your-server:3000/watch \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://www.whatnot.com/live/your-show-id"}'
+```
+
+**Check status:**
+```
+curl http://your-server:3000/status
+```
+
+### How it works
+
+- The server runs Chrome headless with the extension loaded
+- It navigates to your Whatnot live stream page
+- The extension does everything it normally does: tracks sales, bids, chat, timing
+- Data flows to Google Sheets via the webhook (same setup as the browser extension)
+- If the page crashes or navigates away, it auto-recovers
+- Your browser session is saved, so you stay logged in
+
+### First-time login
+
+The server needs your Whatnot session. Two options:
+
+1. **On a machine with a screen**: Run `npm run login`, log in normally, close the browser
+2. **On a headless VPS**: Use VNC or X11 forwarding to get a display, then run `npm run login`
+
+The session persists in `server/browser-profile/`. It should stay valid for weeks/months as long as the server is running (Whatnot refreshes the session automatically).
 
 ## Notes
 
-- Session data is also stored locally in `localStorage` (up to 50 sessions).
-- If a cost is not set for an item, the popup will say `Not set`.
-- The Google Sheet is auto-created on first sync with "Sales" and "Sessions" tabs.
+- Session data is stored locally in `localStorage` (up to 50 sessions) and synced to Google Sheets
+- If a cost is not set for an item, the popup will say `Not set`
+- The Google Sheet is auto-created with Sales, Sessions, and Chat tabs

@@ -1,0 +1,13 @@
+{
+  "name": "whatnot-profit-server",
+  "version": "1.0.0",
+  "description": "Headless browser server for Whatnot profit tracking",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "login": "node login.js"
+  },
+  "dependencies": {
+    "puppeteer": "^24.0.0"
+  }
+}

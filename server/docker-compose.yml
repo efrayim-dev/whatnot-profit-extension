@@ -1,0 +1,15 @@
+services:
+  whatnot-tracker:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - browser-data:/app/server/browser-profile
+    restart: unless-stopped
+    environment:
+      - PORT=3000
+
+volumes:
+  browser-data:
