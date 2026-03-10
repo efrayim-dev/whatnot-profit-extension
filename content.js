@@ -8,6 +8,7 @@
   const FEE_MULTIPLIER = 0.85;
   const POLL_MS = 1000;
   const STORAGE_KEY = "wn_profit_sessions";
+  const CHAT_SYNC_INTERVAL_MS = 30000;
 
   const listingCostCache = new Map();
   const listingCostInFlight = new Map();
@@ -34,6 +35,15 @@
   let webhookUrl = "";
   let sheetsConnected = false;
 
+  /* ── Chat state ──────────────────────────────────────── */
+
+  let chatObserver = null;
+  let chatBuffer = [];
+  let chatSyncTimer = null;
+  let lastSeenChatCount = 0;
+
+  /* ── Sheets sync ─────────────────────────────────────── */
+
   function loadWebhookUrl() {
     if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
       chrome.runtime.sendMessage({ type: "GET_WEBHOOK_URL" }, (resp) => {
@@ -54,24 +64,24 @@
     }
   }
 
-  function syncSaleToSheets(entry) {
+  function sendToBackground(type, payload, cb) {
     if (!webhookUrl || typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return;
-    const payload = {
+    chrome.runtime.sendMessage({ type, payload }, cb || (() => {}));
+  }
+
+  function syncSaleToSheets(entry) {
+    sendToBackground("SYNC_SALE", {
       ...entry,
       sessionId: session ? `${session.liveId}-${session.startedAt}` : ""
-    };
-    chrome.runtime.sendMessage({ type: "SYNC_SALE", payload }, (resp) => {
-      if (resp?.ok) {
-        console.log("[WN Profit] sale synced to Sheets");
-      } else {
-        console.log("[WN Profit] Sheets sync failed:", resp?.error);
-      }
+    }, (resp) => {
+      if (resp?.ok) console.log("[WN Profit] sale synced to Sheets");
+      else console.log("[WN Profit] Sheets sync failed:", resp?.error);
     });
   }
 
   function syncSessionSummary() {
-    if (!webhookUrl || !session || typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return;
-    const payload = {
+    if (!session) return;
+    sendToBackground("SYNC_SESSION_SUMMARY", {
       type: "session_summary",
       sessionId: `${session.liveId}-${session.startedAt}`,
       startedAt: session.startedAt,
@@ -82,15 +92,25 @@
       totalProfit: session.totalProfit,
       avgAuction: avg(session.auctionDurations),
       avgGap: avg(session.gapDurations)
-    };
-    chrome.runtime.sendMessage({ type: "SYNC_SESSION_SUMMARY", payload }, (resp) => {
-      if (resp?.ok) {
-        console.log("[WN Profit] session summary synced to Sheets");
-      } else {
-        console.log("[WN Profit] session summary sync failed:", resp?.error);
-      }
+    }, (resp) => {
+      if (resp?.ok) console.log("[WN Profit] session summary synced to Sheets");
+      else console.log("[WN Profit] session summary sync failed:", resp?.error);
     });
   }
+
+  function syncChatBatch() {
+    if (!chatBuffer.length) return;
+    const batch = chatBuffer.splice(0);
+    sendToBackground("SYNC_CHAT", {
+      sessionId: session ? `${session.liveId}-${session.startedAt}` : "",
+      messages: batch
+    }, (resp) => {
+      if (resp?.ok) console.log("[WN Profit] chat batch synced:", batch.length, "messages");
+      else console.log("[WN Profit] chat sync failed:", resp?.error);
+    });
+  }
+
+  /* ── Session management ──────────────────────────────── */
 
   function newSession(liveId) {
     return {
@@ -101,6 +121,7 @@
       totalCost: 0,
       totalProfit: 0,
       totalNet: 0,
+      totalBids: 0,
       auctionDurations: [],
       gapDurations: []
     };
@@ -131,6 +152,7 @@
     if (typeof entry.costAmount === "number") session.totalCost += entry.costAmount;
     if (typeof entry.netAmount === "number") session.totalNet += entry.netAmount;
     if (typeof entry.profit === "number") session.totalProfit += entry.profit;
+    if (typeof entry.bidCount === "number") session.totalBids += entry.bidCount;
     if (typeof entry.auctionDuration === "number") session.auctionDurations.push(entry.auctionDuration);
     if (typeof entry.gapFromLast === "number") session.gapDurations.push(entry.gapFromLast);
     saveSession();
@@ -138,7 +160,7 @@
   }
 
   function formatDuration(ms) {
-    if (typeof ms !== "number" || ms < 0) return "—";
+    if (typeof ms !== "number" || ms < 0) return "\u2014";
     const totalSec = Math.round(ms / 1000);
     const m = Math.floor(totalSec / 60);
     const s = totalSec % 60;
@@ -229,27 +251,12 @@
         font: 600 13px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         backdrop-filter: blur(6px);
       }
-      .wn-profit-toast .row {
-        display: flex;
-        justify-content: space-between;
-        gap: 8px;
-      }
-      .wn-profit-toast .label {
-        opacity: 0.78;
-        font-weight: 500;
-      }
-      .wn-profit-toast .title {
-        margin-bottom: 6px;
-        font-weight: 700;
-      }
+      .wn-profit-toast .row { display: flex; justify-content: space-between; gap: 8px; }
+      .wn-profit-toast .label { opacity: 0.78; font-weight: 500; }
+      .wn-profit-toast .title { margin-bottom: 6px; font-weight: 700; }
       .wn-profit-toast .ok { color: #86efac; }
       .wn-profit-toast .bad { color: #fda4af; }
-      .wn-profit-toast .hint {
-        margin-top: 6px;
-        opacity: 0.7;
-        font-size: 11px;
-        font-weight: 500;
-      }
+      .wn-profit-toast .hint { margin-top: 6px; opacity: 0.7; font-size: 11px; font-weight: 500; }
       .wn-profit-toast.sale-profit {
         background: rgba(22, 101, 52, 0.94);
         border-color: rgba(74, 222, 128, 0.5);
@@ -268,240 +275,92 @@
         60%  { transform: scale(1);    opacity: 1; }
         100% { transform: scale(1);    opacity: 1; }
       }
-      .wn-profit-toast.pulse {
-        animation: wn-pulse 0.8s ease-in-out;
-      }
+      .wn-profit-toast.pulse { animation: wn-pulse 0.8s ease-in-out; }
 
-      /* ── Analytics panel ── */
       .wn-analytics-toggle {
-        position: fixed;
-        left: 16px;
-        top: 16px;
-        z-index: 2147483646;
-        width: 36px;
-        height: 36px;
-        border-radius: 50%;
-        background: rgba(15, 23, 42, 0.92);
-        border: 1px solid rgba(148, 163, 184, 0.35);
-        color: #e2e8f0;
-        font-size: 18px;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        backdrop-filter: blur(6px);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-        transition: transform 0.15s;
+        position: fixed; left: 16px; top: 16px; z-index: 2147483646;
+        width: 36px; height: 36px; border-radius: 50%;
+        background: rgba(15, 23, 42, 0.92); border: 1px solid rgba(148, 163, 184, 0.35);
+        color: #e2e8f0; font-size: 18px; cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        backdrop-filter: blur(6px); box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: transform 0.15s;
       }
       .wn-analytics-toggle:hover { transform: scale(1.1); }
 
       .wn-analytics-panel {
-        position: fixed;
-        left: 16px;
-        top: 60px;
-        z-index: 2147483646;
-        width: min(400px, calc(100vw - 32px));
-        max-height: calc(100vh - 80px);
-        border-radius: 12px;
-        background: rgba(15, 23, 42, 0.97);
+        position: fixed; left: 16px; top: 60px; z-index: 2147483646;
+        width: min(400px, calc(100vw - 32px)); max-height: calc(100vh - 80px);
+        border-radius: 12px; background: rgba(15, 23, 42, 0.97);
         border: 1px solid rgba(148, 163, 184, 0.35);
-        box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55);
-        color: #e2e8f0;
+        box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55); color: #e2e8f0;
         font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        backdrop-filter: blur(8px);
-        overflow-y: auto;
-        display: none;
+        backdrop-filter: blur(8px); overflow-y: auto; display: none;
       }
       .wn-analytics-panel.open { display: block; }
       .wn-analytics-panel .panel-header {
-        padding: 12px 14px;
-        font-weight: 700;
-        font-size: 14px;
+        padding: 12px 14px; font-weight: 700; font-size: 14px;
         border-bottom: 1px solid rgba(148, 163, 184, 0.2);
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        position: sticky;
-        top: 0;
-        background: rgba(15, 23, 42, 0.97);
-        backdrop-filter: blur(8px);
+        display: flex; justify-content: space-between; align-items: center;
+        position: sticky; top: 0; background: rgba(15, 23, 42, 0.97); backdrop-filter: blur(8px);
       }
-      .wn-analytics-panel .panel-header button {
-        background: rgba(99, 102, 241, 0.25);
-        border: 1px solid rgba(99, 102, 241, 0.4);
-        color: #c7d2fe;
-        border-radius: 6px;
-        padding: 4px 10px;
-        font-size: 11px;
-        cursor: pointer;
-        font-weight: 600;
+      .wn-analytics-panel .panel-header button,
+      .wn-analytics-panel .settings-section button {
+        background: rgba(99, 102, 241, 0.25); border: 1px solid rgba(99, 102, 241, 0.4);
+        color: #c7d2fe; border-radius: 6px; padding: 4px 10px; font-size: 11px;
+        cursor: pointer; font-weight: 600;
       }
-      .wn-analytics-panel .panel-header button:hover {
-        background: rgba(99, 102, 241, 0.4);
-      }
+      .wn-analytics-panel .panel-header button:hover,
+      .wn-analytics-panel .settings-section button:hover { background: rgba(99, 102, 241, 0.4); }
       .wn-analytics-panel .stats-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 8px;
-        padding: 12px 14px;
+        display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 12px 14px;
         border-bottom: 1px solid rgba(148, 163, 184, 0.15);
       }
-      .wn-analytics-panel .stat-box {
-        background: rgba(30, 41, 59, 0.7);
-        border-radius: 8px;
-        padding: 8px 10px;
-      }
-      .wn-analytics-panel .stat-label {
-        font-size: 10px;
-        opacity: 0.65;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        margin-bottom: 2px;
-      }
-      .wn-analytics-panel .stat-value {
-        font-size: 16px;
-        font-weight: 700;
-      }
+      .wn-analytics-panel .stat-box { background: rgba(30, 41, 59, 0.7); border-radius: 8px; padding: 8px 10px; }
+      .wn-analytics-panel .stat-label { font-size: 10px; opacity: 0.65; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+      .wn-analytics-panel .stat-value { font-size: 16px; font-weight: 700; }
       .wn-analytics-panel .stat-value.ok { color: #86efac; }
       .wn-analytics-panel .stat-value.bad { color: #fda4af; }
-      .wn-analytics-panel .sale-list {
-        padding: 8px 14px 14px;
-      }
-      .wn-analytics-panel .sale-list-title {
-        font-weight: 700;
-        font-size: 13px;
-        margin-bottom: 8px;
-        opacity: 0.9;
-      }
+      .wn-analytics-panel .sale-list { padding: 8px 14px 14px; }
+      .wn-analytics-panel .sale-list-title { font-weight: 700; font-size: 13px; margin-bottom: 8px; opacity: 0.9; }
       .wn-analytics-panel .sale-entry {
-        background: rgba(30, 41, 59, 0.5);
-        border-radius: 8px;
-        padding: 8px 10px;
-        margin-bottom: 6px;
-        border-left: 3px solid rgba(148, 163, 184, 0.3);
+        background: rgba(30, 41, 59, 0.5); border-radius: 8px; padding: 8px 10px;
+        margin-bottom: 6px; border-left: 3px solid rgba(148, 163, 184, 0.3);
       }
       .wn-analytics-panel .sale-entry.profit { border-left-color: #86efac; }
       .wn-analytics-panel .sale-entry.loss { border-left-color: #fda4af; }
       .wn-analytics-panel .sale-entry .sale-name {
-        font-weight: 700;
-        font-size: 12px;
-        margin-bottom: 3px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        font-weight: 700; font-size: 12px; margin-bottom: 3px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       }
-      .wn-analytics-panel .sale-entry .sale-row {
-        display: flex;
-        justify-content: space-between;
-        font-size: 11px;
-        opacity: 0.85;
-      }
-      .wn-analytics-panel .sale-entry .sale-meta {
-        font-size: 10px;
-        opacity: 0.55;
-        margin-top: 3px;
-      }
-      .wn-analytics-panel .empty-state {
-        padding: 24px 14px;
-        text-align: center;
-        opacity: 0.5;
-        font-size: 12px;
-      }
-      .wn-analytics-panel .past-sessions {
-        padding: 8px 14px 14px;
-        border-top: 1px solid rgba(148, 163, 184, 0.15);
-      }
+      .wn-analytics-panel .sale-entry .sale-row { display: flex; justify-content: space-between; font-size: 11px; opacity: 0.85; }
+      .wn-analytics-panel .sale-entry .sale-meta { font-size: 10px; opacity: 0.55; margin-top: 3px; }
+      .wn-analytics-panel .empty-state { padding: 24px 14px; text-align: center; opacity: 0.5; font-size: 12px; }
+      .wn-analytics-panel .past-sessions { padding: 8px 14px 14px; border-top: 1px solid rgba(148, 163, 184, 0.15); }
       .wn-analytics-panel .past-session-entry {
-        background: rgba(30, 41, 59, 0.4);
-        border-radius: 8px;
-        padding: 8px 10px;
-        margin-bottom: 6px;
-        cursor: pointer;
-        transition: background 0.15s;
+        background: rgba(30, 41, 59, 0.4); border-radius: 8px; padding: 8px 10px;
+        margin-bottom: 6px; cursor: pointer; transition: background 0.15s;
       }
-      .wn-analytics-panel .past-session-entry:hover {
-        background: rgba(30, 41, 59, 0.7);
-      }
-      .wn-analytics-panel .past-session-entry .ps-date {
-        font-weight: 700;
-        font-size: 11px;
-      }
-      .wn-analytics-panel .past-session-entry .ps-stats {
-        font-size: 10px;
-        opacity: 0.7;
-        margin-top: 2px;
-      }
+      .wn-analytics-panel .past-session-entry:hover { background: rgba(30, 41, 59, 0.7); }
+      .wn-analytics-panel .past-session-entry .ps-date { font-weight: 700; font-size: 11px; }
+      .wn-analytics-panel .past-session-entry .ps-stats { font-size: 10px; opacity: 0.7; margin-top: 2px; }
       .wn-analytics-panel .sheets-bar {
-        padding: 8px 14px;
-        border-bottom: 1px solid rgba(148, 163, 184, 0.15);
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        font-size: 11px;
+        padding: 8px 14px; border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+        display: flex; align-items: center; justify-content: space-between; font-size: 11px;
       }
-      .wn-analytics-panel .sheets-bar .sync-status {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-      }
-      .wn-analytics-panel .sheets-bar .dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        display: inline-block;
-      }
+      .wn-analytics-panel .sheets-bar .sync-status { display: flex; align-items: center; gap: 6px; }
+      .wn-analytics-panel .sheets-bar .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
       .wn-analytics-panel .sheets-bar .dot.on { background: #86efac; }
       .wn-analytics-panel .sheets-bar .dot.off { background: #fda4af; }
-      .wn-analytics-panel .settings-section {
-        padding: 12px 14px;
-        border-bottom: 1px solid rgba(148, 163, 184, 0.15);
-      }
-      .wn-analytics-panel .settings-section label {
-        display: block;
-        font-size: 11px;
-        font-weight: 600;
-        margin-bottom: 6px;
-        opacity: 0.8;
-      }
+      .wn-analytics-panel .settings-section { padding: 12px 14px; border-bottom: 1px solid rgba(148, 163, 184, 0.15); }
+      .wn-analytics-panel .settings-section label { display: block; font-size: 11px; font-weight: 600; margin-bottom: 6px; opacity: 0.8; }
       .wn-analytics-panel .settings-section input {
-        width: 100%;
-        box-sizing: border-box;
-        padding: 6px 8px;
-        border-radius: 6px;
-        border: 1px solid rgba(148, 163, 184, 0.35);
-        background: rgba(30, 41, 59, 0.7);
-        color: #e2e8f0;
-        font-size: 11px;
-        font-family: monospace;
-        outline: none;
+        width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 6px;
+        border: 1px solid rgba(148, 163, 184, 0.35); background: rgba(30, 41, 59, 0.7);
+        color: #e2e8f0; font-size: 11px; font-family: monospace; outline: none;
       }
-      .wn-analytics-panel .settings-section input:focus {
-        border-color: rgba(99, 102, 241, 0.6);
-      }
-      .wn-analytics-panel .settings-section .settings-actions {
-        margin-top: 8px;
-        display: flex;
-        gap: 8px;
-      }
-      .wn-analytics-panel .settings-section button {
-        background: rgba(99, 102, 241, 0.25);
-        border: 1px solid rgba(99, 102, 241, 0.4);
-        color: #c7d2fe;
-        border-radius: 6px;
-        padding: 4px 12px;
-        font-size: 11px;
-        cursor: pointer;
-        font-weight: 600;
-      }
-      .wn-analytics-panel .settings-section button:hover {
-        background: rgba(99, 102, 241, 0.4);
-      }
-      .wn-analytics-panel .settings-section .hint {
-        margin-top: 8px;
-        font-size: 10px;
-        opacity: 0.5;
-        line-height: 1.5;
-      }
+      .wn-analytics-panel .settings-section input:focus { border-color: rgba(99, 102, 241, 0.6); }
+      .wn-analytics-panel .settings-section .settings-actions { margin-top: 8px; display: flex; gap: 8px; }
+      .wn-analytics-panel .settings-section .hint { margin-top: 8px; font-size: 10px; opacity: 0.5; line-height: 1.5; }
     `;
     (document.head || document.documentElement).appendChild(style);
   }
@@ -544,7 +403,7 @@
     );
   }
 
-  function setSalePopup(saleTitle, saleAmount, costAmount, netAmount, diffAmount, currency) {
+  function setSalePopup(saleTitle, saleAmount, costAmount, netAmount, diffAmount, currency, bidCount) {
     const el = getPopupElement();
     el.classList.remove("sale-profit", "sale-loss", "pulse");
     el.style.opacity = "1";
@@ -556,7 +415,8 @@
        <div class="row"><span class="label">Net (after 15%)</span><span>${formatMoney(netAmount, currency)}</span></div>
        <div class="row"><span class="label">Profit</span><span class="${typeof diffAmount === "number" && diffAmount >= 0 ? "ok" : "bad"}">${
          typeof diffAmount === "number" ? formatMoney(diffAmount, currency) : "N/A"
-       }</span></div>`;
+       }</span></div>
+       <div class="row"><span class="label">Bids</span><span>${typeof bidCount === "number" ? bidCount : "\u2014"}</span></div>`;
     const isProfit = typeof diffAmount === "number" && diffAmount >= 0;
     el.classList.add(isProfit ? "sale-profit" : "sale-loss");
     void el.offsetWidth;
@@ -631,7 +491,7 @@
           <span class="dot ${sheetsConnected ? "on" : "off"}"></span>
           <span>Google Sheets: ${sheetsConnected ? "Connected" : "Not connected"}</span>
         </div>
-      </div>`;
+      </div>
       <div class="stats-grid">
         <div class="stat-box">
           <div class="stat-label">Sales</div>
@@ -650,6 +510,10 @@
           <div class="stat-value">${formatMoney(s.totalCost, "USD")}</div>
         </div>
         <div class="stat-box">
+          <div class="stat-label">Total Bids</div>
+          <div class="stat-value">${s.totalBids || 0}</div>
+        </div>
+        <div class="stat-box">
           <div class="stat-label">Avg Auction</div>
           <div class="stat-value">${formatDuration(avgDuration)}</div>
         </div>
@@ -660,10 +524,6 @@
         <div class="stat-box">
           <div class="stat-label">Session Time</div>
           <div class="stat-value">${formatDuration(elapsed)}</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-label">Net (after 15%)</div>
-          <div class="stat-value">${formatMoney(s.totalNet, "USD")}</div>
         </div>
       </div>
       <div class="sale-list">
@@ -678,12 +538,12 @@
         const time = new Date(e.timestamp).toLocaleTimeString();
         html += `
           <div class="sale-entry ${pClass}">
-            <div class="sale-name">#${i + 1} — ${escHtml(e.title || "Sale")}</div>
+            <div class="sale-name">#${i + 1} \u2014 ${escHtml(e.title || "Sale")}</div>
             <div class="sale-row"><span>Sale</span><span>${formatMoney(e.saleAmount, e.currency)}</span></div>
             <div class="sale-row"><span>Cost</span><span>${typeof e.costAmount === "number" ? formatMoney(e.costAmount, e.currency) : "Not set"}</span></div>
             <div class="sale-row"><span>Net</span><span>${formatMoney(e.netAmount, e.currency)}</span></div>
             <div class="sale-row"><span>Profit</span><span class="${pClass === "profit" ? "ok" : "bad"}">${typeof e.profit === "number" ? formatMoney(e.profit, e.currency) : "N/A"}</span></div>
-            <div class="sale-meta">${time} · Auction: ${formatDuration(e.auctionDuration)} · Gap: ${formatDuration(e.gapFromLast)}</div>
+            <div class="sale-meta">${time} \u00B7 Bids: ${e.bidCount ?? "\u2014"} \u00B7 Auction: ${formatDuration(e.auctionDuration)} \u00B7 Gap: ${formatDuration(e.gapFromLast)}</div>
           </div>`;
       }
     }
@@ -715,7 +575,7 @@
       html += `
         <div class="past-session-entry" data-idx="${i}">
           <div class="ps-date">${d}</div>
-          <div class="ps-stats">${s.sales.length} sales · Profit: <span class="${profitClass}">${formatMoney(s.totalProfit, "USD")}</span> · Revenue: ${formatMoney(s.totalRevenue, "USD")}</div>
+          <div class="ps-stats">${s.sales.length} sales \u00B7 Profit: <span class="${profitClass}">${formatMoney(s.totalProfit, "USD")}</span> \u00B7 Revenue: ${formatMoney(s.totalRevenue, "USD")}</div>
         </div>`;
     }
     html += `</div>`;
@@ -731,10 +591,7 @@
 
   function renderSettingsSection(panel) {
     let section = panel.querySelector(".settings-section");
-    if (!settingsVisible) {
-      if (section) section.remove();
-      return;
-    }
+    if (!settingsVisible) { if (section) section.remove(); return; }
     if (section) return;
     const sheetsBar = panel.querySelector(".sheets-bar");
     if (!sheetsBar) return;
@@ -775,7 +632,7 @@
       if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
         chrome.runtime.sendMessage({
           type: "SYNC_SALE",
-          payload: { timestamp: Date.now(), title: "Test Sale", saleAmount: 10, costAmount: 5, netAmount: 8.5, profit: 3.5, currency: "USD", auctionDuration: 15000, gapFromLast: 5000, sessionId: "test" }
+          payload: { timestamp: Date.now(), title: "Test Sale", saleAmount: 10, costAmount: 500, netAmount: 8.5, profit: 3.5, currency: "USD", bidCount: 3, auctionDuration: 15000, gapFromLast: 5000, sessionId: "test" }
         }, (resp) => {
           if (resp?.ok) {
             saveWebhookUrl(url);
@@ -802,7 +659,7 @@
 
   function exportCsv(s) {
     if (!s || !s.sales.length) return;
-    const rows = [["#", "Time", "Item", "Sale", "Cost", "Net", "Profit", "Auction Duration (s)", "Gap (s)"]];
+    const rows = [["#", "Time", "Item", "Sale", "Cost", "Net", "Profit", "Bids", "Auction Duration (s)", "Gap (s)"]];
     s.sales.forEach((e, i) => {
       rows.push([
         i + 1,
@@ -812,6 +669,7 @@
         e.costAmount ?? "",
         e.netAmount ?? "",
         e.profit ?? "",
+        e.bidCount ?? "",
         typeof e.auctionDuration === "number" ? Math.round(e.auctionDuration / 1000) : "",
         typeof e.gapFromLast === "number" ? Math.round(e.gapFromLast / 1000) : ""
       ]);
@@ -823,6 +681,7 @@
     rows.push(["Total Cost", s.totalCost]);
     rows.push(["Total Net", s.totalNet]);
     rows.push(["Total Profit", s.totalProfit]);
+    rows.push(["Total Bids", s.totalBids || 0]);
     rows.push(["Avg Auction", typeof avg(s.auctionDurations) === "number" ? Math.round(avg(s.auctionDurations) / 1000) + "s" : ""]);
     rows.push(["Avg Gap", typeof avg(s.gapDurations) === "number" ? Math.round(avg(s.gapDurations) / 1000) + "s" : ""]);
 
@@ -888,8 +747,11 @@
   /* ── DOM selectors ─────────────────────────────────── */
 
   const DOM_TITLE_SELECTOR = "#bottom-section-stream-container > div > div:nth-child(1) > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div > div > div:nth-child(1)";
+  const DOM_BID_COUNT_SELECTOR = "#bottom-section-stream-container > div > div:nth-child(1) > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div > div > div:nth-child(1) > div > p";
   const DOM_PRICE_SELECTOR = "#bottom-section-stream-container > div > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div:nth-child(1) > div:nth-child(2)";
   const DOM_TIMER_SELECTOR = "#bottom-section-stream-container > div > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div:nth-child(2) > div:nth-child(2) > div:nth-child(2) > div";
+
+  const DOM_CHAT_CONTAINER_SELECTOR = "#app > div > div:nth-child(2) > div > div > div > div:nth-child(4) > div > div:nth-child(1) > div:nth-child(3) > div:nth-child(5) > div:nth-child(3)";
 
   function getDomCurrentItemTitle() {
     const el = document.querySelector(DOM_TITLE_SELECTOR);
@@ -900,6 +762,14 @@
     }
     text = text.trim();
     return text || null;
+  }
+
+  function getDomBidCount() {
+    const el = document.querySelector(DOM_BID_COUNT_SELECTOR);
+    if (!el) return null;
+    const text = (el.textContent || "").trim();
+    const m = /(\d+)/.exec(text);
+    return m ? parseInt(m[1], 10) : null;
   }
 
   function getDomPrice() {
@@ -914,17 +784,70 @@
     return (el.textContent || "").trim() || null;
   }
 
+  /* ── Chat observer ─────────────────────────────────── */
+
+  function extractChatMessage(node) {
+    if (!node || node.nodeType !== 1) return null;
+    const text = (node.textContent || "").trim();
+    if (!text) return null;
+    return { timestamp: Date.now(), text };
+  }
+
+  function installChatObserver() {
+    if (chatObserver) { chatObserver.disconnect(); chatObserver = null; }
+
+    const tryAttach = () => {
+      const container = document.querySelector(DOM_CHAT_CONTAINER_SELECTOR);
+      if (!container) return false;
+
+      lastSeenChatCount = container.children.length;
+
+      chatObserver = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          for (const node of mutation.addedNodes) {
+            const msg = extractChatMessage(node);
+            if (msg) {
+              chatBuffer.push(msg);
+            }
+          }
+        }
+      });
+
+      chatObserver.observe(container, { childList: true });
+      console.log("[WN Profit] chat observer attached, existing messages:", lastSeenChatCount);
+      return true;
+    };
+
+    if (!tryAttach()) {
+      let attempts = 0;
+      const retryTimer = setInterval(() => {
+        attempts++;
+        if (tryAttach() || attempts > 30) {
+          clearInterval(retryTimer);
+          if (attempts > 30) console.log("[WN Profit] chat container not found after 30 attempts");
+        }
+      }, 2000);
+    }
+  }
+
+  function startChatSync() {
+    if (chatSyncTimer) clearInterval(chatSyncTimer);
+    chatSyncTimer = setInterval(syncChatBatch, CHAT_SYNC_INTERVAL_MS);
+  }
+
+  function stopChatSync() {
+    if (chatObserver) { chatObserver.disconnect(); chatObserver = null; }
+    if (chatSyncTimer) { clearInterval(chatSyncTimer); chatSyncTimer = null; }
+    syncChatBatch();
+  }
+
   /* ── Inventory cache ───────────────────────────────── */
 
   let inventoryLoaded = false;
   let inventoryLoading = false;
 
   async function fetchListingPage(liveId, after) {
-    const variables = {
-      livestreamId: liveId,
-      tab: "ACTIVE",
-      first: 100
-    };
+    const variables = { livestreamId: liveId, tab: "ACTIVE", first: 100 };
     if (after) variables.after = after;
     const body = JSON.stringify({
       operationName: "LivestreamShop",
@@ -935,18 +858,14 @@
             id
             shop(tab: $tab, transactionTypes: $transactionTypes, first: $first, after: $after) {
               pageInfo { hasNextPage endCursor }
-              edges {
-                node { id title subtitle price { amount currency } }
-              }
+              edges { node { id title subtitle price { amount currency } } }
             }
           }
         }
       `
     });
     const res = await fetch(GRAPHQL_URL, {
-      method: "POST",
-      credentials: "include",
-      cache: "no-store",
+      method: "POST", credentials: "include", cache: "no-store",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body
     });
@@ -972,9 +891,7 @@
           const node = edge?.node;
           if (!node?.title) continue;
           const numMatch = /^(\d+):/.exec(node.title);
-          if (numMatch) {
-            titleToListingCache.set(numMatch[1], node);
-          }
+          if (numMatch) titleToListingCache.set(numMatch[1], node);
           titleToListingCache.set(node.title, node);
           total++;
         }
@@ -1002,6 +919,7 @@
       const now = Date.now();
       const priceText = getDomPrice();
       const saleAmount = parseDomPrice(priceText);
+      const bidCount = getDomBidCount();
       const title = lastDomTitle || "Sale";
       const costAmount = currentListingCost ? currentListingCost.amountCents / 100 : null;
       const currency = currentListingCurrency || "USD";
@@ -1014,29 +932,17 @@
       auctionStartTime = null;
 
       console.log("[WN Profit] sale detected (timer hit 00:00)", {
-        title: title?.slice(0, 60),
-        priceText,
-        saleAmount,
-        cost: costAmount,
-        net,
-        profit: diff,
-        auctionDuration,
-        gapFromLast
+        title: title?.slice(0, 60), priceText, saleAmount, bidCount,
+        cost: costAmount, net, profit: diff, auctionDuration, gapFromLast
       });
 
       recordSale({
-        timestamp: now,
-        title,
-        saleAmount,
-        costAmount,
-        netAmount: net,
-        profit: diff,
-        currency,
-        auctionDuration,
-        gapFromLast
+        timestamp: now, title, saleAmount, costAmount,
+        netAmount: net, profit: diff, currency, bidCount,
+        auctionDuration, gapFromLast
       });
 
-      setSalePopup(title, saleAmount, costAmount, net, diff, currency);
+      setSalePopup(title, saleAmount, costAmount, net, diff, currency, bidCount);
       if (panelVisible) renderPanel();
     }
 
@@ -1076,13 +982,9 @@
       currentListingCurrency = cost?.currency || "USD";
       setCurrentItemPopup(domTitle, cost);
       console.log("[WN Profit] item changed", {
-        domText: domTitle.slice(0, 80),
-        itemNum,
-        listingId,
-        cost: cost?.amountCents ?? null
+        domText: domTitle.slice(0, 80), itemNum, listingId, cost: cost?.amountCents ?? null
       });
-    } catch {
-    }
+    } catch {}
   }
 
   function pollTick() {
@@ -1091,14 +993,12 @@
   }
 
   function clearPolling() {
-    if (pollTimer !== null) {
-      window.clearInterval(pollTimer);
-      pollTimer = null;
-    }
+    if (pollTimer !== null) { window.clearInterval(pollTimer); pollTimer = null; }
   }
 
   function startPollingForLive(liveId) {
     clearPolling();
+    stopChatSync();
     listingCostCache.clear();
     titleToListingCache.clear();
     inventoryLoaded = false;
@@ -1108,6 +1008,7 @@
     saleAlreadyFired = false;
     auctionStartTime = null;
     lastSaleTime = null;
+    chatBuffer = [];
     currentLiveId = liveId;
 
     if (!currentLiveId) {
@@ -1120,11 +1021,13 @@
     session = newSession(currentLiveId);
     saveSession();
 
-    setStatusPopup("Live detected", `Livestream: ${currentLiveId.slice(0, 8)}... — loading inventory`);
+    setStatusPopup("Live detected", `Livestream: ${currentLiveId.slice(0, 8)}... \u2014 loading inventory`);
     void buildInventoryCache(currentLiveId).then(() => {
-      setStatusPopup("Live detected", `Livestream: ${currentLiveId.slice(0, 8)}... — ${titleToListingCache.size} items loaded`);
+      setStatusPopup("Live detected", `Livestream: ${currentLiveId.slice(0, 8)}... \u2014 ${titleToListingCache.size} items loaded`);
     });
     pollTimer = window.setInterval(pollTick, POLL_MS);
+    installChatObserver();
+    startChatSync();
   }
 
   /* ── Page bridge (live ID detection from network) ──── */
@@ -1141,8 +1044,7 @@
         if (!currentLiveId && typeof liveId === "string" && LIVE_ID_RE.test(liveId)) {
           startPollingForLive(liveId.toLowerCase());
         }
-      } catch {
-      }
+      } catch {}
     });
 
     const script = document.createElement("script");
@@ -1150,7 +1052,6 @@
       (() => {
         if (window.__wnProfitBridgeInstalled) return;
         window.__wnProfitBridgeInstalled = true;
-
         function parseBody(body) {
           if (!body || typeof body !== "string") return {};
           try {
@@ -1158,11 +1059,7 @@
             return { liveId: obj?.variables?.liveId || obj?.variables?.livestreamId || obj?.variables?.id || undefined };
           } catch { return {}; }
         }
-
-        function emit(data) {
-          window.postMessage({ source: "WN_PROFIT_BRIDGE", ...data }, "*");
-        }
-
+        function emit(data) { window.postMessage({ source: "WN_PROFIT_BRIDGE", ...data }, "*"); }
         const originalFetch = window.fetch?.bind(window);
         if (typeof originalFetch === "function") {
           window.fetch = async (...args) => {
@@ -1178,7 +1075,6 @@
             return response;
           };
         }
-
         const origOpen = XMLHttpRequest.prototype.open;
         const origSend = XMLHttpRequest.prototype.send;
         XMLHttpRequest.prototype.open = function(method, url, ...rest) {
@@ -1211,7 +1107,7 @@
       setStatusPopup(
         liveId ? "Live detected" : "Waiting for live stream",
         liveId
-          ? `Livestream: ${liveId.slice(0, 8)}... — watching for sales`
+          ? `Livestream: ${liveId.slice(0, 8)}... \u2014 watching for sales`
           : "Open a Whatnot live stream page to start tracking."
       );
     }
