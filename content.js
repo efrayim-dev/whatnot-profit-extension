@@ -6,7 +6,7 @@
       : "dev";
   const LIVE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const FEE_MULTIPLIER = 0.85;
-  const POLL_MS = 1000;
+  const POLL_MS = 500;
   const STORAGE_KEY = "wn_profit_sessions";
   const CHAT_SYNC_INTERVAL_MS = 30000;
 
@@ -32,8 +32,9 @@
   let lastSaleTime = null;
   let panelVisible = false;
   let settingsVisible = false;
-  let webhookUrl = "";
-  let sheetsConnected = false;
+  const DEFAULT_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxwYTT_Cr6OMiP-QBOWyQGW25C6ljlU9V4f2TZ2ceTjjFAPSPKzM3OV8As377uCK6lA/exec";
+  let webhookUrl = DEFAULT_WEBHOOK_URL;
+  let sheetsConnected = true;
 
   /* ── Chat state ──────────────────────────────────────── */
 
@@ -48,15 +49,15 @@
     if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
       chrome.runtime.sendMessage({ type: "GET_WEBHOOK_URL" }, (resp) => {
         if (chrome.runtime.lastError) {
-          console.log("[WN Profit] failed to load webhook URL:", chrome.runtime.lastError.message);
+          console.log("[WN Profit] storage read failed, using default webhook URL");
           return;
         }
         if (resp?.url) {
           webhookUrl = resp.url;
           sheetsConnected = true;
-          console.log("[WN Profit] Sheets webhook loaded:", resp.url.slice(0, 50) + "...");
+          console.log("[WN Profit] Sheets webhook loaded from storage:", resp.url.slice(0, 50) + "...");
         } else {
-          console.log("[WN Profit] no webhook URL configured yet");
+          console.log("[WN Profit] no URL in storage, using hardcoded default");
         }
       });
     }
@@ -660,24 +661,28 @@
       saveWebhookUrl(input.value.trim());
       msgEl.textContent = "Saved!";
       msgEl.style.color = "#86efac";
-      renderPanel();
     });
 
     section.querySelector(".test-btn").addEventListener("click", () => {
-      const url = input.value.trim();
+      const url = input.value.trim() || DEFAULT_WEBHOOK_URL;
       if (!url) { msgEl.textContent = "Enter a URL first"; msgEl.style.color = "#fda4af"; return; }
+      saveWebhookUrl(url);
       msgEl.textContent = "Testing...";
       msgEl.style.color = "#e2e8f0";
       if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
         chrome.runtime.sendMessage({
           type: "SYNC_SALE",
-          payload: { timestamp: Date.now(), title: "Test Sale", saleAmount: 10, costAmount: 500, netAmount: 8.5, profit: 3.5, currency: "USD", bidCount: 3, auctionDuration: 15000, gapFromLast: 5000, sessionId: "test" }
+          webhookUrl: url,
+          payload: { timestamp: Date.now(), title: "Test Sale", saleAmount: 10, costAmount: 5, netAmount: 8.5, profit: 3.5, currency: "USD", bidCount: 3, auctionDuration: 15000, gapFromLast: 5000, sessionId: "test" }
         }, (resp) => {
+          if (chrome.runtime.lastError) {
+            msgEl.textContent = "Error: " + chrome.runtime.lastError.message;
+            msgEl.style.color = "#fda4af";
+            return;
+          }
           if (resp?.ok) {
-            saveWebhookUrl(url);
             msgEl.textContent = "Connected! Test row added to your sheet.";
             msgEl.style.color = "#86efac";
-            renderPanel();
           } else {
             msgEl.textContent = "Failed: " + (resp?.error || "unknown error");
             msgEl.style.color = "#fda4af";
@@ -689,9 +694,14 @@
     const syncBtn = section.querySelector(".sync-btn");
     if (syncBtn) {
       syncBtn.addEventListener("click", () => {
+        if (!webhookUrl) {
+          msgEl.textContent = "No webhook URL set";
+          msgEl.style.color = "#fda4af";
+          return;
+        }
         syncSessionSummary();
-        msgEl.textContent = "Session summary synced!";
-        msgEl.style.color = "#86efac";
+        msgEl.textContent = "Syncing...";
+        msgEl.style.color = "#e2e8f0";
       });
     }
   }
@@ -952,8 +962,9 @@
     const timerText = getDomTimer();
     const isZero = timerText === "00:00" || timerText === "0:00";
     const wasRunning = lastTimerText && lastTimerText !== "00:00" && lastTimerText !== "0:00";
+    const timerDisappeared = !timerText && wasRunning;
 
-    if (isZero && wasRunning && !saleAlreadyFired) {
+    if ((isZero && wasRunning && !saleAlreadyFired) || (timerDisappeared && !saleAlreadyFired && auctionStartTime)) {
       saleAlreadyFired = true;
       const now = Date.now();
       const priceText = getDomPrice();

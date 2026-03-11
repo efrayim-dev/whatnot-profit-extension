@@ -15,8 +15,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.type === "SYNC_SALE" || msg.type === "SYNC_SESSION_SUMMARY" || msg.type === "SYNC_CHAT") {
+    const DEFAULT_URL = "https://script.google.com/macros/s/AKfycbxwYTT_Cr6OMiP-QBOWyQGW25C6ljlU9V4f2TZ2ceTjjFAPSPKzM3OV8As377uCK6lA/exec";
     chrome.storage.sync.get("webhookUrl", async (data) => {
-      const url = data.webhookUrl;
+      const url = msg.webhookUrl || data.webhookUrl || DEFAULT_URL;
       if (!url) {
         console.log("[WN Background] no webhook URL configured");
         sendResponse({ ok: false, error: "No webhook URL configured" });
