@@ -143,8 +143,13 @@
     try {
       const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
       const idx = stored.findIndex(s => s.liveId === session.liveId);
-      if (idx >= 0) stored[idx] = session;
-      else stored.push(session);
+      if (session.sales.length === 0) {
+        if (idx >= 0) stored.splice(idx, 1);
+      } else if (idx >= 0) {
+        stored[idx] = session;
+      } else {
+        stored.push(session);
+      }
       if (stored.length > 50) stored.splice(0, stored.length - 50);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
     } catch {}
@@ -169,7 +174,7 @@
         existing.auctionDurations = (existing.auctionDurations || []).concat(s.auctionDurations || []);
         existing.gapDurations = (existing.gapDurations || []).concat(s.gapDurations || []);
       }
-      const result = Array.from(merged.values());
+      const result = Array.from(merged.values()).filter(s => s.sales && s.sales.length > 0);
       if (result.length !== raw.length) {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(result));
       }
