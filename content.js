@@ -805,7 +805,23 @@
   const TIMER_CONTAINER = "#bottom-section-stream-container";
   let cachedTimerEl = null;
 
-  const DOM_CHAT_CONTAINER_SELECTOR = "#app > div > div:nth-child(2) > div > div > div > div:nth-child(4) > div > div:nth-child(1) > div:nth-child(3) > div:nth-child(5) > div:nth-child(3)";
+  let cachedChatContainer = null;
+  function findChatContainer() {
+    if (cachedChatContainer && cachedChatContainer.isConnected && cachedChatContainer.children.length > 0) {
+      return cachedChatContainer;
+    }
+    cachedChatContainer = null;
+    const suffix = "div > div > div > div:nth-child(4) > div > div:nth-child(1) > div:nth-child(3) > div:nth-child(5) > div:nth-child(3)";
+    for (let n = 1; n <= 6; n++) {
+      const el = document.querySelector(`#app > div > div:nth-child(${n}) > ${suffix}`);
+      if (el && el.children.length >= 3) {
+        cachedChatContainer = el;
+        console.log("[WN Profit] chat container found at nth-child(" + n + "), children:", el.children.length);
+        return el;
+      }
+    }
+    return null;
+  }
 
   function getDomCurrentItemTitle() {
     const el = document.querySelector(DOM_TITLE_SELECTOR);
@@ -897,7 +913,7 @@
     if (chatObserver) { chatObserver.disconnect(); chatObserver = null; }
 
     const tryAttach = () => {
-      const container = document.querySelector(DOM_CHAT_CONTAINER_SELECTOR);
+      const container = findChatContainer();
       if (!container) return false;
 
       lastSeenChatCount = container.children.length;
