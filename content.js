@@ -862,18 +862,26 @@
     let username = "";
     let message = fullText;
 
-    const usernameEl = node.querySelector("a, [class*='username'], [class*='user-name'], [class*='UserName'], button");
-    if (usernameEl) {
-      username = (usernameEl.textContent || "").trim();
-      const remaining = fullText.replace(username, "").trim();
-      if (remaining) message = remaining;
+    const allEls = node.querySelectorAll("*");
+    for (const el of allEls) {
+      if (el.children.length > 0) continue;
+      const t = (el.textContent || "").trim();
+      if (t && t.length >= 2 && t.length < 30 && /^[@\w._-]+$/.test(t)) {
+        username = t;
+        break;
+      }
+    }
+
+    if (username) {
+      message = fullText.replace(username, "").trim();
+      message = message.replace(/^\s*(Mod|VIP|Host)\s*/i, "").trim();
     }
 
     if (!username) {
-      const parts = fullText.match(/^(@?\S+)\s+(.+)$/s);
-      if (parts) {
-        username = parts[1];
-        message = parts[2].trim();
+      const lines = fullText.split(/\n/);
+      if (lines.length >= 2 && lines[0].trim().length < 30 && /^[@\w._-]+$/.test(lines[0].trim())) {
+        username = lines[0].trim();
+        message = lines.slice(1).join(" ").trim();
       }
     }
 
