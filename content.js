@@ -289,7 +289,7 @@
       .wn-profit-toast.pulse { animation: wn-pulse 0.8s ease-in-out; }
 
       .wn-analytics-toggle {
-        position: fixed; left: 16px; top: 16px; z-index: 2147483646;
+        position: fixed; right: 16px; top: 16px; z-index: 2147483647;
         width: 36px; height: 36px; border-radius: 50%;
         background: rgba(15, 23, 42, 0.92); border: 1px solid rgba(148, 163, 184, 0.35);
         color: #e2e8f0; font-size: 18px; cursor: pointer;
@@ -299,7 +299,7 @@
       .wn-analytics-toggle:hover { transform: scale(1.1); }
 
       .wn-analytics-panel {
-        position: fixed; left: 16px; top: 60px; z-index: 2147483646;
+        position: fixed; right: 16px; top: 60px; z-index: 2147483647;
         width: min(400px, calc(100vw - 32px)); max-height: calc(100vh - 80px);
         border-radius: 12px; background: rgba(15, 23, 42, 0.97);
         border: 1px solid rgba(148, 163, 184, 0.35);
