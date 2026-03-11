@@ -681,7 +681,9 @@
             return;
           }
           if (resp?.ok) {
-            msgEl.textContent = "Connected! Test row added to your sheet.";
+            msgEl.textContent = resp.redirected
+              ? "Sent! Check Google Drive for \"Whatnot Sales Tracker\" spreadsheet."
+              : "Connected! Test row added to your sheet.";
             msgEl.style.color = "#86efac";
           } else {
             msgEl.textContent = "Failed: " + (resp?.error || "unknown error");

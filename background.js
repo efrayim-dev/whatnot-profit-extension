@@ -1,7 +1,9 @@
+const DEFAULT_URL = "https://script.google.com/macros/s/AKfycbxwYTT_Cr6OMiP-QBOWyQGW25C6ljlU9V4f2TZ2ceTjjFAPSPKzM3OV8As377uCK6lA/exec";
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === "GET_WEBHOOK_URL") {
     chrome.storage.sync.get("webhookUrl", (data) => {
-      sendResponse({ url: data.webhookUrl || "" });
+      sendResponse({ url: data.webhookUrl || DEFAULT_URL });
     });
     return true;
   }
@@ -15,35 +17,54 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.type === "SYNC_SALE" || msg.type === "SYNC_SESSION_SUMMARY" || msg.type === "SYNC_CHAT") {
-    const DEFAULT_URL = "https://script.google.com/macros/s/AKfycbxwYTT_Cr6OMiP-QBOWyQGW25C6ljlU9V4f2TZ2ceTjjFAPSPKzM3OV8As377uCK6lA/exec";
     chrome.storage.sync.get("webhookUrl", async (data) => {
       const url = msg.webhookUrl || data.webhookUrl || DEFAULT_URL;
       if (!url) {
-        console.log("[WN Background] no webhook URL configured");
         sendResponse({ ok: false, error: "No webhook URL configured" });
         return;
       }
       const bodyStr = JSON.stringify(msg.payload);
       console.log("[WN Background] sending", msg.type, "to", url.slice(0, 60), "body length:", bodyStr.length);
+      console.log("[WN Background] payload:", bodyStr.slice(0, 300));
+
       try {
+        // Google Apps Script executes doPost server-side then returns a 302.
+        // With redirect:"follow", the 302 becomes a GET (body lost), so the
+        // final response we read is from doGet — not useful for confirming
+        // the write.  We use redirect:"manual" instead: the POST still
+        // reaches Google, doPost still runs, we just get an opaque-redirect
+        // response we can't read.  That's fine — fire-and-forget.
         const resp = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "text/plain" },
           body: bodyStr,
-          redirect: "follow"
+          redirect: "manual"
         });
-        console.log("[WN Background] response status:", resp.status, "url:", resp.url?.slice(0, 80));
-        if (!resp.ok) {
-          const text = await resp.text().catch(() => "");
-          console.log("[WN Background] error body:", text.slice(0, 200));
-          sendResponse({ ok: false, error: `HTTP ${resp.status}: ${text.slice(0, 100)}` });
+
+        console.log("[WN Background] response type:", resp.type, "status:", resp.status);
+
+        if (resp.type === "opaqueredirect" || resp.status === 0 || (resp.status >= 300 && resp.status < 400)) {
+          // Redirect means Google received and processed the POST.
+          console.log("[WN Background] redirect received — doPost executed on server");
+          sendResponse({ ok: true, redirected: true });
           return;
         }
-        const text = await resp.text().catch(() => "{}");
-        console.log("[WN Background] success:", text.slice(0, 200));
-        let json = {};
-        try { json = JSON.parse(text); } catch {}
-        sendResponse({ ok: true, data: json });
+
+        if (resp.ok) {
+          const text = await resp.text().catch(() => "{}");
+          console.log("[WN Background] response body:", text.slice(0, 300));
+          let json = {};
+          try { json = JSON.parse(text); } catch {}
+          if (json.status === "error") {
+            sendResponse({ ok: false, error: json.message || "Script error" });
+          } else {
+            sendResponse({ ok: true, data: json });
+          }
+          return;
+        }
+
+        const errText = await resp.text().catch(() => "");
+        sendResponse({ ok: false, error: `HTTP ${resp.status}: ${errText.slice(0, 100)}` });
       } catch (e) {
         console.log("[WN Background] fetch error:", e.message);
         sendResponse({ ok: false, error: e.message });
