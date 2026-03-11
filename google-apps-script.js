@@ -83,6 +83,12 @@ function ensureSheet(ss, name, headers) {
     sheet.appendRow(headers);
     sheet.getRange("1:1").setFontWeight("bold");
     sheet.setFrozenRows(1);
+  } else {
+    var currentCols = sheet.getLastColumn();
+    if (currentCols < headers.length) {
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      sheet.getRange("1:1").setFontWeight("bold");
+    }
   }
   return sheet;
 }
@@ -143,6 +149,7 @@ function doGet() {
   return ContentService
     .createTextOutput(JSON.stringify({
       status: "ok",
+      version: 2,
       message: "Whatnot Sales Webhook is running. Use POST to send data."
     }))
     .setMimeType(ContentService.MimeType.JSON);
