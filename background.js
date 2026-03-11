@@ -1,4 +1,4 @@
-const DEFAULT_URL = "https://script.google.com/macros/s/AKfycbxwYTT_Cr6OMiP-QBOWyQGW25C6ljlU9V4f2TZ2ceTjjFAPSPKzM3OV8As377uCK6lA/exec";
+const DEFAULT_URL = "https://script.google.com/macros/s/AKfycbyvPGGDto5-gVC3pyl2_3DtuD7TwwmOGGhJfDDbxo1hHARwESpFECpy8nR3mrtwmZ9W/exec";
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === "GET_WEBHOOK_URL") {

@@ -69,7 +69,7 @@ function getOrCreateSpreadsheet() {
   summarySheet.setFrozenRows(1);
 
   const chatSheet = ss.insertSheet("Chat");
-  chatSheet.appendRow(["Timestamp", "Session ID", "Message"]);
+  chatSheet.appendRow(["Timestamp", "Session ID", "Username", "Message"]);
   chatSheet.getRange("1:1").setFontWeight("bold");
   chatSheet.setFrozenRows(1);
 
@@ -125,7 +125,7 @@ function writeSummary(ss, data) {
 }
 
 function writeChat(ss, data) {
-  const sheet = ensureSheet(ss, "Chat", ["Timestamp", "Session ID", "Message"]);
+  const sheet = ensureSheet(ss, "Chat", ["Timestamp", "Session ID", "Username", "Message"]);
   const sessionId = data.sessionId || "";
   const messages = data.messages || [];
   for (let i = 0; i < messages.length; i++) {
@@ -133,6 +133,7 @@ function writeChat(ss, data) {
     sheet.appendRow([
       msg.timestamp ? new Date(msg.timestamp).toLocaleString() : new Date().toLocaleString(),
       sessionId,
+      msg.username || "",
       msg.text || ""
     ]);
   }

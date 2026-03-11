@@ -32,7 +32,7 @@
   let lastSaleTime = null;
   let panelVisible = false;
   let settingsVisible = false;
-  const DEFAULT_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxwYTT_Cr6OMiP-QBOWyQGW25C6ljlU9V4f2TZ2ceTjjFAPSPKzM3OV8As377uCK6lA/exec";
+  const DEFAULT_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbyvPGGDto5-gVC3pyl2_3DtuD7TwwmOGGhJfDDbxo1hHARwESpFECpy8nR3mrtwmZ9W/exec";
   let webhookUrl = DEFAULT_WEBHOOK_URL;
   let sheetsConnected = true;
 
@@ -292,8 +292,8 @@
       .wn-profit-toast .row { display: flex; justify-content: space-between; gap: 8px; }
       .wn-profit-toast .label { opacity: 0.78; font-weight: 500; }
       .wn-profit-toast .title { margin-bottom: 6px; font-weight: 700; }
-      .wn-profit-toast .ok { color: #86efac; }
-      .wn-profit-toast .bad { color: #fda4af; }
+      .wn-profit-toast .ok { color: #4ade80; font-weight: 700; }
+      .wn-profit-toast .bad { color: #fb7185; font-weight: 700; }
       .wn-profit-toast .hint { margin-top: 6px; opacity: 0.7; font-size: 11px; font-weight: 500; }
       .wn-profit-toast.sale-profit {
         background: rgba(22, 101, 52, 0.94);
@@ -356,16 +356,16 @@
       .wn-analytics-panel .stat-box { background: rgba(30, 41, 59, 0.7); border-radius: 8px; padding: 8px 10px; }
       .wn-analytics-panel .stat-label { font-size: 10px; opacity: 0.65; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
       .wn-analytics-panel .stat-value { font-size: 16px; font-weight: 700; }
-      .wn-analytics-panel .stat-value.ok { color: #86efac; }
-      .wn-analytics-panel .stat-value.bad { color: #fda4af; }
+      .wn-analytics-panel .stat-value.ok { color: #4ade80; font-weight: 800; }
+      .wn-analytics-panel .stat-value.bad { color: #fb7185; font-weight: 800; }
       .wn-analytics-panel .sale-list { padding: 8px 14px 14px; }
       .wn-analytics-panel .sale-list-title { font-weight: 700; font-size: 13px; margin-bottom: 8px; opacity: 0.9; }
       .wn-analytics-panel .sale-entry {
         background: rgba(30, 41, 59, 0.5); border-radius: 8px; padding: 8px 10px;
-        margin-bottom: 6px; border-left: 3px solid rgba(148, 163, 184, 0.3);
+        margin-bottom: 6px; border-left: 5px solid rgba(148, 163, 184, 0.3);
       }
-      .wn-analytics-panel .sale-entry.profit { border-left-color: #86efac; }
-      .wn-analytics-panel .sale-entry.loss { border-left-color: #fda4af; }
+      .wn-analytics-panel .sale-entry.profit { border-left-color: #4ade80; background: rgba(22, 101, 52, 0.15); }
+      .wn-analytics-panel .sale-entry.loss { border-left-color: #fb7185; background: rgba(127, 29, 29, 0.15); }
       .wn-analytics-panel .sale-entry .sale-name {
         font-weight: 700; font-size: 12px; margin-bottom: 3px;
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -856,9 +856,28 @@
 
   function extractChatMessage(node) {
     if (!node || node.nodeType !== 1) return null;
-    const text = (node.textContent || "").trim();
-    if (!text) return null;
-    return { timestamp: Date.now(), text };
+    const fullText = (node.textContent || "").trim();
+    if (!fullText) return null;
+
+    let username = "";
+    let message = fullText;
+
+    const usernameEl = node.querySelector("a, [class*='username'], [class*='user-name'], [class*='UserName'], button");
+    if (usernameEl) {
+      username = (usernameEl.textContent || "").trim();
+      const remaining = fullText.replace(username, "").trim();
+      if (remaining) message = remaining;
+    }
+
+    if (!username) {
+      const parts = fullText.match(/^(@?\S+)\s+(.+)$/s);
+      if (parts) {
+        username = parts[1];
+        message = parts[2].trim();
+      }
+    }
+
+    return { timestamp: Date.now(), username, text: message };
   }
 
   function installChatObserver() {
