@@ -47,10 +47,16 @@
   function loadWebhookUrl() {
     if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
       chrome.runtime.sendMessage({ type: "GET_WEBHOOK_URL" }, (resp) => {
+        if (chrome.runtime.lastError) {
+          console.log("[WN Profit] failed to load webhook URL:", chrome.runtime.lastError.message);
+          return;
+        }
         if (resp?.url) {
           webhookUrl = resp.url;
           sheetsConnected = true;
-          console.log("[WN Profit] Sheets webhook loaded");
+          console.log("[WN Profit] Sheets webhook loaded:", resp.url.slice(0, 50) + "...");
+        } else {
+          console.log("[WN Profit] no webhook URL configured yet");
         }
       });
     }
@@ -70,10 +76,15 @@
   }
 
   function syncSaleToSheets(entry) {
+    console.log("[WN Profit] attempting sale sync, webhookUrl:", webhookUrl ? "set" : "NOT SET");
     sendToBackground("SYNC_SALE", {
       ...entry,
       sessionId: session ? `${session.liveId}-${session.startedAt}` : ""
     }, (resp) => {
+      if (chrome.runtime.lastError) {
+        console.log("[WN Profit] runtime error:", chrome.runtime.lastError.message);
+        return;
+      }
       if (resp?.ok) console.log("[WN Profit] sale synced to Sheets");
       else console.log("[WN Profit] Sheets sync failed:", resp?.error);
     });
@@ -415,8 +426,7 @@
        <div class="row"><span class="label">Net (after 15%)</span><span>${formatMoney(netAmount, currency)}</span></div>
        <div class="row"><span class="label">Profit</span><span class="${typeof diffAmount === "number" && diffAmount >= 0 ? "ok" : "bad"}">${
          typeof diffAmount === "number" ? formatMoney(diffAmount, currency) : "N/A"
-       }</span></div>
-       <div class="row"><span class="label">Bids</span><span>${typeof bidCount === "number" ? bidCount : "\u2014"}</span></div>`;
+       }</span></div>`;
     const isProfit = typeof diffAmount === "number" && diffAmount >= 0;
     el.classList.add(isProfit ? "sale-profit" : "sale-loss");
     void el.offsetWidth;
