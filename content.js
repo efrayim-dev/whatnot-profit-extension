@@ -42,6 +42,7 @@
   let chatBuffer = [];
   let chatSyncTimer = null;
   let lastSeenChatCount = 0;
+  const recentChatHashes = new Set();
 
   /* ── Sheets sync ─────────────────────────────────────── */
 
@@ -885,6 +886,10 @@
       }
     }
 
+    if (!username) {
+      console.log("[WN Profit] chat: could not extract username from:", node.tagName, node.className, "innerHTML:", node.innerHTML?.slice(0, 300));
+    }
+
     return { timestamp: Date.now(), username, text: message };
   }
 
@@ -900,15 +905,22 @@
       chatObserver = new MutationObserver((mutations) => {
         for (const mutation of mutations) {
           for (const node of mutation.addedNodes) {
+            if (node.nodeType !== 1) continue;
             const msg = extractChatMessage(node);
-            if (msg) {
-              chatBuffer.push(msg);
+            if (!msg) continue;
+            const hash = `${msg.username}|${msg.text}`;
+            if (recentChatHashes.has(hash)) continue;
+            recentChatHashes.add(hash);
+            if (recentChatHashes.size > 200) {
+              const first = recentChatHashes.values().next().value;
+              recentChatHashes.delete(first);
             }
+            chatBuffer.push(msg);
           }
         }
       });
 
-      chatObserver.observe(container, { childList: true });
+      chatObserver.observe(container, { childList: true, subtree: false });
       console.log("[WN Profit] chat observer attached, existing messages:", lastSeenChatCount);
       return true;
     };
