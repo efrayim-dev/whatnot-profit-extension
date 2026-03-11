@@ -47,20 +47,13 @@
   /* ── Sheets sync ─────────────────────────────────────── */
 
   function loadWebhookUrl() {
-    if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
-      chrome.runtime.sendMessage({ type: "GET_WEBHOOK_URL" }, (resp) => {
-        if (chrome.runtime.lastError) {
-          console.log("[WN Profit] storage read failed, using default webhook URL");
-          return;
-        }
-        if (resp?.url) {
-          webhookUrl = resp.url;
-          sheetsConnected = true;
-          console.log("[WN Profit] Sheets webhook loaded from storage:", resp.url.slice(0, 50) + "...");
-        } else {
-          console.log("[WN Profit] no URL in storage, using hardcoded default");
-        }
-      });
+    if (DEFAULT_WEBHOOK_URL) {
+      webhookUrl = DEFAULT_WEBHOOK_URL;
+      sheetsConnected = true;
+      if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
+        chrome.runtime.sendMessage({ type: "SET_WEBHOOK_URL", url: DEFAULT_WEBHOOK_URL });
+      }
+      console.log("[WN Profit] using hardcoded webhook URL:", DEFAULT_WEBHOOK_URL.slice(0, 50) + "...");
     }
   }
 
@@ -74,7 +67,7 @@
 
   function sendToBackground(type, payload, cb) {
     if (!webhookUrl || typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return;
-    chrome.runtime.sendMessage({ type, payload }, cb || (() => {}));
+    chrome.runtime.sendMessage({ type, payload, webhookUrl }, cb || (() => {}));
   }
 
   function syncSaleToSheets(entry) {
