@@ -869,58 +869,34 @@
     const fullText = (node.textContent || "").trim();
     if (!fullText) return null;
 
-    const leafEls = [];
-    const allEls = node.querySelectorAll("*");
-    for (const el of allEls) {
-      if (el.children.length > 0) continue;
-      const t = (el.textContent || "").trim();
-      if (t) leafEls.push({ el, text: t });
-    }
-
-    const badges = /^(Mod|VIP|Host|Creator)$/i;
-    let usernameIdx = -1;
     let username = "";
-
-    if (leafEls.length >= 2) {
-      const first = leafEls[0];
-      if (first.text.length < 30 && /^[@\w._-]+$/.test(first.text) && !badges.test(first.text)) {
-        usernameIdx = 0;
-        username = first.text;
-      }
+    const img = node.querySelector("img[alt*='profile image']");
+    if (img) {
+      const alt = img.getAttribute("alt") || "";
+      username = alt.replace(/\s*profile image\s*$/i, "").trim();
     }
 
-    if (!username && leafEls.length >= 2) {
-      for (let i = 0; i < Math.min(leafEls.length, 3); i++) {
-        const el = leafEls[i].el;
-        const t = leafEls[i].text;
-        if (badges.test(t)) continue;
-        const style = window.getComputedStyle(el);
-        if (style.fontWeight >= 700 || style.fontWeight === "bold") {
-          usernameIdx = i;
+    if (!username) {
+      const allEls = node.querySelectorAll("*");
+      for (const el of allEls) {
+        if (el.children.length > 0) continue;
+        const t = (el.textContent || "").trim();
+        if (t && t.length >= 2 && t.length < 30 && /^[@\w._-]+$/.test(t) && !/^(Mod|VIP|Host|Creator)$/i.test(t)) {
           username = t;
           break;
         }
       }
     }
 
-    let message;
-    if (usernameIdx >= 0) {
-      const msgParts = [];
-      for (let i = 0; i < leafEls.length; i++) {
-        if (i === usernameIdx) continue;
-        if (badges.test(leafEls[i].text)) continue;
-        msgParts.push(leafEls[i].text);
-      }
-      message = msgParts.join(" ").trim();
-    } else {
-      message = fullText;
+    const badges = /^(Mod|VIP|Host|Creator)$/i;
+    const leafEls = [];
+    const allEls = node.querySelectorAll("*");
+    for (const el of allEls) {
+      if (el.children.length > 0) continue;
+      const t = (el.textContent || "").trim();
+      if (t && !badges.test(t) && t !== username) leafEls.push(t);
     }
-
-    if (!username) {
-      console.log("[WN Profit] chat: no username. leaves:", leafEls.length,
-        "texts:", leafEls.slice(0, 6).map(l => l.text).join(" | "),
-        "html:", node.innerHTML?.slice(0, 500));
-    }
+    const message = leafEls.join(" ").trim() || fullText;
 
     return { timestamp: Date.now(), username, text: message };
   }
