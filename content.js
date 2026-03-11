@@ -879,31 +879,40 @@
     let username = "";
     let message = fullText;
 
+    const leafEls = [];
     const allEls = node.querySelectorAll("*");
     for (const el of allEls) {
       if (el.children.length > 0) continue;
       const t = (el.textContent || "").trim();
-      if (t && t.length >= 2 && t.length < 30 && /^[@\w._-]+$/.test(t)) {
-        username = t;
-        break;
+      if (t) leafEls.push({ el, text: t });
+    }
+
+    if (leafEls.length >= 2) {
+      const first = leafEls[0];
+      if (first.text.length < 30 && /^[@\w._-]+$/.test(first.text)) {
+        username = first.text;
+        message = fullText.replace(username, "").trim();
+        message = message.replace(/^\s*(Mod|VIP|Host)\s*/i, "").trim();
       }
     }
 
-    if (username) {
-      message = fullText.replace(username, "").trim();
-      message = message.replace(/^\s*(Mod|VIP|Host)\s*/i, "").trim();
-    }
-
-    if (!username) {
-      const lines = fullText.split(/\n/);
-      if (lines.length >= 2 && lines[0].trim().length < 30 && /^[@\w._-]+$/.test(lines[0].trim())) {
-        username = lines[0].trim();
-        message = lines.slice(1).join(" ").trim();
+    if (!username && leafEls.length >= 2) {
+      for (let i = 0; i < Math.min(leafEls.length, 3); i++) {
+        const el = leafEls[i].el;
+        const style = window.getComputedStyle(el);
+        if (style.fontWeight >= 700 || style.fontWeight === "bold") {
+          username = leafEls[i].text;
+          message = fullText.replace(username, "").trim();
+          message = message.replace(/^\s*(Mod|VIP|Host)\s*/i, "").trim();
+          break;
+        }
       }
     }
 
     if (!username) {
-      console.log("[WN Profit] chat: could not extract username from:", node.tagName, node.className, "innerHTML:", node.innerHTML?.slice(0, 300));
+      console.log("[WN Profit] chat: no username found. leaves:", leafEls.length,
+        "texts:", leafEls.slice(0, 5).map(l => l.text).join(" | "),
+        "html:", node.innerHTML?.slice(0, 400));
     }
 
     return { timestamp: Date.now(), username, text: message };
