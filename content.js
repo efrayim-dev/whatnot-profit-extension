@@ -142,7 +142,7 @@
     if (!session) return;
     try {
       const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-      const idx = stored.findIndex(s => s.liveId === session.liveId && s.startedAt === session.startedAt);
+      const idx = stored.findIndex(s => s.liveId === session.liveId);
       if (idx >= 0) stored[idx] = session;
       else stored.push(session);
       if (stored.length > 50) stored.splice(0, stored.length - 50);
@@ -152,7 +152,28 @@
 
   function loadPastSessions() {
     try {
-      return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+      const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+      const merged = new Map();
+      for (const s of raw) {
+        const key = s.liveId;
+        if (!key) continue;
+        if (!merged.has(key)) { merged.set(key, s); continue; }
+        const existing = merged.get(key);
+        existing.startedAt = Math.min(existing.startedAt, s.startedAt);
+        existing.sales = (existing.sales || []).concat(s.sales || []);
+        existing.totalRevenue = (existing.totalRevenue || 0) + (s.totalRevenue || 0);
+        existing.totalCost = (existing.totalCost || 0) + (s.totalCost || 0);
+        existing.totalNet = (existing.totalNet || 0) + (s.totalNet || 0);
+        existing.totalProfit = (existing.totalProfit || 0) + (s.totalProfit || 0);
+        existing.totalBids = (existing.totalBids || 0) + (s.totalBids || 0);
+        existing.auctionDurations = (existing.auctionDurations || []).concat(s.auctionDurations || []);
+        existing.gapDurations = (existing.gapDurations || []).concat(s.gapDurations || []);
+      }
+      const result = Array.from(merged.values());
+      if (result.length !== raw.length) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(result));
+      }
+      return result;
     } catch { return []; }
   }
 
@@ -491,9 +512,9 @@
       <div class="panel-header">
         <span>${isViewing ? "Past Session" : "Session Analytics"}</span>
         <div>
-          ${isViewing ? `<button onclick="document.getElementById('wn-analytics-panel').__wnBack()">Back</button>` : ""}
-          <button onclick="document.getElementById('wn-analytics-panel').__wnExport()">Export CSV</button>
-          ${!isViewing ? `<button onclick="document.getElementById('wn-analytics-panel').__wnSettings()" title="Google Sheets settings">\u2699</button>` : ""}
+          ${isViewing ? `<button data-action="back">Back</button>` : ""}
+          <button data-action="export">Export CSV</button>
+          ${!isViewing ? `<button data-action="settings" title="Google Sheets settings">\u2699</button>` : ""}
         </div>
       </div>
       <div class="sheets-bar">
@@ -560,12 +581,15 @@
     html += `</div>`;
     panel.innerHTML = html;
 
-    panel.__wnExport = () => exportCsv(s);
-    panel.__wnBack = () => renderPanel();
-    panel.__wnSettings = () => {
+    const backBtn = panel.querySelector('[data-action="back"]');
+    if (backBtn) backBtn.addEventListener("click", () => renderPanel());
+    const exportBtn = panel.querySelector('[data-action="export"]');
+    if (exportBtn) exportBtn.addEventListener("click", () => exportCsv(s));
+    const settingsBtn = panel.querySelector('[data-action="settings"]');
+    if (settingsBtn) settingsBtn.addEventListener("click", () => {
       settingsVisible = !settingsVisible;
       renderSettingsSection(panel);
-    };
+    });
 
     if (settingsVisible && !isViewing) renderSettingsSection(panel);
     if (!isViewing) renderPastSessions(panel);
@@ -573,7 +597,7 @@
 
   function renderPastSessions(panel) {
     const past = loadPastSessions().filter(
-      s => !(session && s.liveId === session.liveId && s.startedAt === session.startedAt)
+      s => !(session && s.liveId === session.liveId)
     );
     if (!past.length) return;
 
@@ -1028,7 +1052,13 @@
       return;
     }
 
-    session = newSession(currentLiveId);
+    const existing = loadPastSessions().find(s => s.liveId === currentLiveId);
+    if (existing) {
+      session = existing;
+      console.log("[WN Profit] resuming existing session for", currentLiveId.slice(0, 8), "with", existing.sales.length, "prior sales");
+    } else {
+      session = newSession(currentLiveId);
+    }
     saveSession();
 
     setStatusPopup("Live detected", `Livestream: ${currentLiveId.slice(0, 8)}... \u2014 loading inventory`);
