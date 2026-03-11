@@ -798,7 +798,9 @@
   const DOM_TITLE_SELECTOR = "#bottom-section-stream-container > div > div:nth-child(1) > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div > div > div:nth-child(1)";
   const DOM_BID_COUNT_SELECTOR = "#bottom-section-stream-container > div > div:nth-child(1) > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div > div > div:nth-child(1) > div > p";
   const DOM_PRICE_SELECTOR = "#bottom-section-stream-container > div > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div:nth-child(1) > div:nth-child(2)";
-  const DOM_TIMER_SELECTOR = "#bottom-section-stream-container > div > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div:nth-child(2) > div:nth-child(2) > div:nth-child(5) > div";
+  const TIMER_PATTERN = /^\d{1,2}:\d{2}$/;
+  const TIMER_CONTAINER = "#bottom-section-stream-container";
+  let cachedTimerEl = null;
 
   const DOM_CHAT_CONTAINER_SELECTOR = "#app > div > div:nth-child(2) > div > div > div > div:nth-child(4) > div > div:nth-child(1) > div:nth-child(3) > div:nth-child(5) > div:nth-child(3)";
 
@@ -828,9 +830,24 @@
   }
 
   function getDomTimer() {
-    const el = document.querySelector(DOM_TIMER_SELECTOR);
-    if (!el) return null;
-    return (el.textContent || "").trim() || null;
+    if (cachedTimerEl && cachedTimerEl.isConnected) {
+      const text = (cachedTimerEl.textContent || "").trim();
+      if (TIMER_PATTERN.test(text)) return text;
+      cachedTimerEl = null;
+    }
+    const container = document.querySelector(TIMER_CONTAINER);
+    if (!container) return null;
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_ELEMENT);
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (node.children.length > 0) continue;
+      const text = (node.textContent || "").trim();
+      if (TIMER_PATTERN.test(text)) {
+        cachedTimerEl = node;
+        return text;
+      }
+    }
+    return null;
   }
 
   /* ── Chat observer ─────────────────────────────────── */
