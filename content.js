@@ -708,11 +708,12 @@
     const rows = [headers];
     const sessionId = s.liveId ? `${s.liveId}-${s.startedAt}` : "";
     const round2 = (n) => (typeof n === "number" && !isNaN(n) ? Math.round(n * 100) / 100 : "");
+    const esc = (v) => (v == null || v === "" ? "" : `"${String(v).replace(/"/g, '""')}"`);
     s.sales.forEach((e) => {
       rows.push([
-        e.timestamp ? new Date(e.timestamp).toLocaleString() : "",
-        sessionId,
-        `"${(e.title || "").replace(/"/g, '""')}"`,
+        esc(e.timestamp ? new Date(e.timestamp).toLocaleString() : ""),
+        esc(sessionId),
+        esc(e.title || ""),
         typeof e.saleAmount === "number" ? round2(e.saleAmount) : "",
         typeof e.costAmount === "number" ? round2(e.costAmount) : "",
         typeof e.netAmount === "number" ? round2(e.netAmount) : "",
