@@ -70,36 +70,45 @@ function ensureSheet(ss, name, headers) {
   return sheet;
 }
 
-function isDuplicateSale(saleId) {
-  if (!saleId) return false;
-  var cache = CacheService.getScriptCache();
-  var key = "sale_" + saleId;
-  if (cache.get(key)) return true;
-  cache.put(key, "1", 300);
-  return false;
-}
-
 function writeSale(ss, data) {
-  if (isDuplicateSale(data.saleId)) {
-    console.log("Duplicate sale skipped: " + data.saleId);
+  // Use a script-level lock so that two devices firing simultaneously
+  // cannot both pass the duplicate check before either one sets the cache key.
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+  } catch (e) {
+    console.log("Could not acquire lock: " + e.message);
     return;
   }
-  const sheet = ensureSheet(ss, "Sales", [
-    "Timestamp", "Session ID", "Item", "Sale Price", "Cost",
-    "Net (after 15%)", "Profit", "Bids", "Auction Duration (s)", "Gap From Last (s)"
-  ]);
-  sheet.appendRow([
-    data.timestamp ? new Date(data.timestamp).toLocaleString() : new Date().toLocaleString(),
-    data.sessionId || "",
-    data.title || "",
-    data.saleAmount != null ? data.saleAmount : "",
-    data.costAmount != null ? data.costAmount : "",
-    data.netAmount != null ? data.netAmount : "",
-    data.profit != null ? data.profit : "",
-    data.bidCount != null ? data.bidCount : "",
-    data.auctionDuration != null ? Math.round(data.auctionDuration / 1000) : "",
-    data.gapFromLast != null ? Math.round(data.gapFromLast / 1000) : ""
-  ]);
+  try {
+    if (data.saleId) {
+      var cache = CacheService.getScriptCache();
+      var key = "sale_" + data.saleId;
+      if (cache.get(key)) {
+        console.log("Duplicate sale skipped: " + data.saleId);
+        return;
+      }
+      cache.put(key, "1", 300);
+    }
+    const sheet = ensureSheet(ss, "Sales", [
+      "Timestamp", "Session ID", "Item", "Sale Price", "Cost",
+      "Net (after 15%)", "Profit", "Bids", "Auction Duration (s)", "Gap From Last (s)"
+    ]);
+    sheet.appendRow([
+      data.timestamp ? new Date(data.timestamp).toLocaleString() : new Date().toLocaleString(),
+      data.sessionId || "",
+      data.title || "",
+      data.saleAmount != null ? data.saleAmount : "",
+      data.costAmount != null ? data.costAmount : "",
+      data.netAmount != null ? data.netAmount : "",
+      data.profit != null ? data.profit : "",
+      data.bidCount != null ? data.bidCount : "",
+      data.auctionDuration != null ? Math.round(data.auctionDuration / 1000) : "",
+      data.gapFromLast != null ? Math.round(data.gapFromLast / 1000) : ""
+    ]);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function writeSummary(ss, data) {
