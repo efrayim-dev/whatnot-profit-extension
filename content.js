@@ -14,6 +14,7 @@
   const DEVICE_PRIORITY_KEY = "wn_profit_device_priority";
   const VIEW_START_KEY = "wn_profit_view_start";
   const CHAT_SYNC_INTERVAL_MS = 30000;
+  const SESSION_SYNC_INTERVAL_MS = 180000; // 3 minutes
 
   const listingCostCache = new Map();
   const listingCostInFlight = new Map();
@@ -42,6 +43,8 @@
   const DEFAULT_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbzSOPc9lvs9fU6S5quI0lj8RBQ_O_RbI34RNfCHzUy9eqVanHhKXltUe9D1vrXcOZ9zqw/exec";
   let webhookUrl = DEFAULT_WEBHOOK_URL;
   let sheetsConnected = true;
+
+  let sessionSyncTimer = null;
 
   /* ── Chat state ──────────────────────────────────────── */
 
@@ -134,6 +137,7 @@
       profit: null,
       bidCount: null,
       viewers: entry.viewers,
+      showDuration: entry.showDuration,
       auctionDuration: entry.auctionDuration,
       gapFromLast: entry.gapFromLast
     }, (resp) => {
@@ -162,22 +166,43 @@
 
   function syncSessionSummary() {
     if (!session) return;
-    const { revenue, cost, net, profit } = computeTotals(session);
+    const t = computeTotals(session);
+    const elapsed = viewStartTime ? Date.now() - viewStartTime : 0;
+    const hrs = elapsed / 3600000;
     sendWithRetry("SYNC_SESSION_SUMMARY", {
       type: "session_summary",
       sessionId: `${session.liveId}-${session.startedAt}`,
       startedAt: session.startedAt,
       totalSales: session.sales.length,
-      totalRevenue: revenue,
-      totalCost: cost,
-      totalNet: net,
-      totalProfit: profit,
+      totalRevenue: t.revenue,
+      totalCost: t.cost,
+      totalNet: t.net,
+      totalProfit: t.profit,
+      avgSale: t.avgSale,
+      highestSale: t.highest,
+      lowestSale: t.lowest,
+      highestViewers: session.highestViewers || 0,
+      showDuration: getDomShowDuration(),
+      profitPerHour: hrs > 0 ? Math.round((t.profit / hrs) * 100) / 100 : null,
+      revenuePerHour: hrs > 0 ? Math.round((t.revenue / hrs) * 100) / 100 : null,
       avgAuction: avg(session.auctionDurations),
       avgGap: avg(session.gapDurations)
     }, (resp) => {
       if (resp?.ok) console.log("[WN Profit] session summary synced to Sheets");
       else console.log("[WN Profit] session summary sync failed:", resp?.error);
     });
+  }
+
+  function startSessionSync() {
+    if (sessionSyncTimer) clearInterval(sessionSyncTimer);
+    sessionSyncTimer = setInterval(() => {
+      syncSessionSummary();
+      saveSession();
+    }, SESSION_SYNC_INTERVAL_MS);
+  }
+
+  function stopSessionSync() {
+    if (sessionSyncTimer) { clearInterval(sessionSyncTimer); sessionSyncTimer = null; }
   }
 
   function syncChatBatch() {
@@ -204,6 +229,7 @@
       totalProfit: 0,
       totalNet: 0,
       totalBids: 0,
+      highestViewers: 0,
       auctionDurations: [],
       gapDurations: []
     };
@@ -266,6 +292,9 @@
     if (typeof entry.netAmount === "number") session.totalNet += entry.netAmount;
     if (typeof entry.profit === "number") session.totalProfit += entry.profit;
     if (typeof entry.bidCount === "number") session.totalBids += entry.bidCount;
+    if (typeof entry.viewers === "number" && entry.viewers > (session.highestViewers || 0)) {
+      session.highestViewers = entry.viewers;
+    }
     if (typeof entry.auctionDuration === "number") session.auctionDurations.push(entry.auctionDuration);
     if (typeof entry.gapFromLast === "number") session.gapDurations.push(entry.gapFromLast);
     saveSession();
@@ -828,7 +857,7 @@
 
   function exportCsv(s) {
     if (!s || !s.sales.length) return;
-    const headers = ["Timestamp", "Session ID", "Item", "Sale Price", "Cost", "Net (after 15%)", "Profit", "Bids", "Auction Duration (s)", "Gap From Last (s)", "Description", "Viewers"];
+    const headers = ["Timestamp", "Session ID", "Item", "Sale Price", "Cost", "Net (after 15%)", "Profit", "Bids", "Auction Duration (s)", "Gap From Last (s)", "Description", "Viewers", "Show Duration"];
     const rows = [headers];
     const sessionId = s.liveId ? `${s.liveId}-${s.startedAt}` : "";
     const round2 = (n) => (typeof n === "number" && !isNaN(n) ? Math.round(n * 100) / 100 : "");
@@ -846,7 +875,8 @@
         typeof e.auctionDuration === "number" ? Math.round(e.auctionDuration / 1000) : "",
         typeof e.gapFromLast === "number" ? Math.round(e.gapFromLast / 1000) : "",
         esc(e.description || ""),
-        typeof e.viewers === "number" ? e.viewers : ""
+        typeof e.viewers === "number" ? e.viewers : "",
+        esc(e.showDuration || "")
       ]);
     });
     const csvTotals = computeTotals(s);
@@ -931,6 +961,7 @@
   const DOM_PRICE_SELECTOR = "#bottom-section-stream-container > div > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div:nth-child(1) > div:nth-child(2)";
   const DOM_DESCRIPTION_SELECTOR = "#bottom-section-stream-container > div > div > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div > div > div:nth-child(2) > div:nth-child(4)";
   const DOM_VIEWER_COUNT_SELECTOR = "#app > div > div:nth-child(3) > div > div > div > div:nth-child(4) > div > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div:nth-child(2) > div > div:nth-child(1) > div > div:nth-child(4)";
+  const DOM_SHOW_DURATION_SELECTOR = "#app > div > div:nth-child(3) > div > div > div > div:nth-child(4) > div > div:nth-child(1) > div:nth-child(3) > div:nth-child(1) > div:nth-child(3) > div:nth-child(1) > div:nth-child(3)";
   const TIMER_PATTERN = /^\d{1,2}:\d{2}$/;
   const TIMER_CONTAINER = "#bottom-section-stream-container";
   let cachedTimerEl = null;
@@ -1001,6 +1032,11 @@
     const text = (el.textContent || "").trim().replace(/[,\s]/g, "");
     const n = parseInt(text, 10);
     return Number.isFinite(n) ? n : null;
+  }
+
+  function getDomShowDuration() {
+    const el = document.querySelector(DOM_SHOW_DURATION_SELECTOR);
+    return el ? (el.textContent || "").trim() || null : null;
   }
 
   function getDomTimer() {
@@ -1222,11 +1258,16 @@
 
       const noBids = (bidCount ?? 0) === 0;
       const viewers = getDomViewerCount();
+      if (session && typeof viewers === "number" && viewers > (session.highestViewers || 0)) {
+        session.highestViewers = viewers;
+      }
+
+      const showDuration = getDomShowDuration();
 
       if (noBids) {
         console.log("[WN Profit] auction ended with no bids", { title: title?.slice(0, 60), auctionDuration, gapFromLast, viewers });
         syncNoSaleToSheets({
-          timestamp: now, title, auctionDuration, gapFromLast, viewers
+          timestamp: now, title, auctionDuration, gapFromLast, viewers, showDuration
         });
       } else {
         console.log("[WN Profit] sale detected (timer hit 00:00)", {
@@ -1236,7 +1277,7 @@
         recordSale({
           timestamp: now, title, description: currentListingDescription,
           saleAmount, costAmount, netAmount: net, profit: diff,
-          currency, bidCount, auctionDuration, gapFromLast, viewers
+          currency, bidCount, auctionDuration, gapFromLast, viewers, showDuration
         });
         setSalePopup(title, saleAmount, costAmount, net, diff, currency, bidCount);
         if (panelVisible) renderPanel();
@@ -1317,6 +1358,7 @@
   function startPollingForLive(liveId) {
     clearPolling();
     stopChatSync();
+    stopSessionSync();
     listingCostCache.clear();
     titleToListingCache.clear();
     inventoryLoaded = false;
@@ -1332,6 +1374,7 @@
 
     if (!currentLiveId) {
       if (session && session.sales.length > 0) syncSessionSummary();
+      stopSessionSync();
       session = null;
       setStatusPopup("Waiting for live stream", "Open a Whatnot live stream page to start tracking.");
       return;
@@ -1358,6 +1401,7 @@
     pollTimer = window.setInterval(pollTick, POLL_MS);
     installChatObserver();
     startChatSync();
+    startSessionSync();
   }
 
   /* ── Page bridge (live ID detection from network) ──── */

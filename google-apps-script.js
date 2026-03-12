@@ -73,7 +73,7 @@ function ensureSheet(ss, name, headers) {
 var SALE_HEADERS = [
   "Timestamp", "Session ID", "Item", "Sale Price", "Cost",
   "Net (after 15%)", "Profit", "Bids", "Auction Duration (s)", "Gap From Last (s)",
-  "Description", "Viewers", "Source", "Sale ID"
+  "Description", "Viewers", "Show Duration", "Source", "Sale ID"
 ];
 var SALE_ID_COL = SALE_HEADERS.indexOf("Sale ID");
 
@@ -91,6 +91,7 @@ function buildSaleRow(data, source) {
     data.gapFromLast != null ? Math.round(data.gapFromLast / 1000) : "",
     data.description || "",
     data.viewers != null ? data.viewers : "",
+    data.showDuration || "",
     source,
     data.saleId || ""
   ];
@@ -161,22 +162,55 @@ function writeSale(ss, data) {
   }
 }
 
+var SESSION_HEADERS = [
+  "Session Start", "Session ID", "Total Sales", "Total Revenue",
+  "Total Cost", "Total Net", "Total Profit",
+  "Avg Sale", "Highest Sale", "Lowest Sale",
+  "Profit/Hour", "Revenue/Hour",
+  "Highest Viewers", "Show Duration",
+  "Avg Auction (s)", "Avg Gap (s)"
+];
+
 function writeSummary(ss, data) {
-  const sheet = ensureSheet(ss, "Sessions", [
-    "Session Start", "Session ID", "Total Sales", "Total Revenue",
-    "Total Cost", "Total Net", "Total Profit", "Avg Auction (s)", "Avg Gap (s)"
-  ]);
-  sheet.appendRow([
+  var sheet = ensureSheet(ss, "Sessions", SESSION_HEADERS);
+  var sessionId = data.sessionId || "";
+
+  // Upsert: find existing row for this session and overwrite, or append
+  var existingRow = -1;
+  if (sessionId) {
+    var lastRow = sheet.getLastRow();
+    if (lastRow >= 2) {
+      var ids = sheet.getRange(2, 2, lastRow - 1, 1).getValues();
+      for (var i = ids.length - 1; i >= 0; i--) {
+        if (String(ids[i][0]) === String(sessionId)) { existingRow = i + 2; break; }
+      }
+    }
+  }
+
+  var row = [
     data.startedAt ? new Date(data.startedAt).toLocaleString() : new Date().toLocaleString(),
-    data.sessionId || "",
+    sessionId,
     data.totalSales != null ? data.totalSales : "",
-    data.totalRevenue != null ? data.totalRevenue : "",
-    data.totalCost != null ? data.totalCost : "",
-    data.totalNet != null ? data.totalNet : "",
-    data.totalProfit != null ? data.totalProfit : "",
+    data.totalRevenue != null ? Math.round(data.totalRevenue * 100) / 100 : "",
+    data.totalCost != null ? Math.round(data.totalCost * 100) / 100 : "",
+    data.totalNet != null ? Math.round(data.totalNet * 100) / 100 : "",
+    data.totalProfit != null ? Math.round(data.totalProfit * 100) / 100 : "",
+    data.avgSale != null ? Math.round(data.avgSale * 100) / 100 : "",
+    data.highestSale != null ? Math.round(data.highestSale * 100) / 100 : "",
+    data.lowestSale != null ? Math.round(data.lowestSale * 100) / 100 : "",
+    data.profitPerHour != null ? data.profitPerHour : "",
+    data.revenuePerHour != null ? data.revenuePerHour : "",
+    data.highestViewers != null ? data.highestViewers : "",
+    data.showDuration || "",
     data.avgAuction != null ? Math.round(data.avgAuction / 1000) : "",
     data.avgGap != null ? Math.round(data.avgGap / 1000) : ""
-  ]);
+  ];
+
+  if (existingRow > 0) {
+    sheet.getRange(existingRow, 1, 1, row.length).setValues([row]);
+  } else {
+    sheet.appendRow(row);
+  }
 }
 
 function writeChat(ss, data) {
@@ -198,7 +232,7 @@ function doGet() {
   return ContentService
     .createTextOutput(JSON.stringify({
       status: "ok",
-      version: 2,
+      version: 3,
       message: "Whatnot Sales Webhook is running. Use POST to send data."
     }))
     .setMimeType(ContentService.MimeType.JSON);
