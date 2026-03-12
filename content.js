@@ -9,6 +9,7 @@
   const POLL_MS = 500;
   const STORAGE_KEY = "wn_profit_sessions";
   const TOAST_POS_KEY = "wn_profit_toast_pos";
+  const FOCUS_SEARCH_KEY = "wn_profit_focus_search";
   const CHAT_SYNC_INTERVAL_MS = 30000;
 
   const listingCostCache = new Map();
@@ -293,11 +294,20 @@
         border-bottom: 1px solid rgba(148, 163, 184, 0.2);
         display: flex;
         align-items: center;
-        gap: 6px;
+        justify-content: space-between;
+        gap: 8px;
         font-size: 11px;
-        opacity: 0.7;
+        opacity: 0.9;
         user-select: none;
       }
+      .wn-profit-toast .wn-focus-search-toggle {
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        white-space: nowrap;
+      }
+      .wn-profit-toast .wn-focus-search-toggle input { cursor: pointer; }
       .wn-profit-toast .wn-toast-body {
         padding: 10px 12px;
       }
@@ -432,8 +442,18 @@
       el.innerHTML = "";
       const dragHandle = document.createElement("div");
       dragHandle.className = "wn-toast-drag";
-      dragHandle.textContent = "Move";
-      dragHandle.title = "Drag to move";
+      dragHandle.innerHTML = `
+        <span class="wn-drag-handle-text">Move</span>
+        <label class="wn-focus-search-toggle">
+          <input type="checkbox" id="wn-focus-search-cb" />
+          <span>Jump to search on sale</span>
+        </label>`;
+      try {
+        dragHandle.querySelector("#wn-focus-search-cb").checked = localStorage.getItem(FOCUS_SEARCH_KEY) === "1";
+      } catch {}
+      dragHandle.querySelector("#wn-focus-search-cb").addEventListener("change", (e) => {
+        try { localStorage.setItem(FOCUS_SEARCH_KEY, e.target.checked ? "1" : "0"); } catch {}
+      });
       el.appendChild(dragHandle);
       el.appendChild(body);
     }
@@ -449,6 +469,7 @@
       const handle = el.querySelector(".wn-toast-drag");
       handle.addEventListener("mousedown", (e) => {
         if (e.button !== 0) return;
+        if (e.target.closest(".wn-focus-search-toggle")) return;
         e.preventDefault();
         const startX = e.clientX - el.getBoundingClientRect().left;
         const startY = e.clientY - el.getBoundingClientRect().top;
@@ -882,6 +903,18 @@
   const TIMER_CONTAINER = "#bottom-section-stream-container";
   let cachedTimerEl = null;
 
+  let cachedSearchBar = null;
+  function findSearchBar() {
+    if (cachedSearchBar && cachedSearchBar.isConnected) return cachedSearchBar;
+    cachedSearchBar = null;
+    const suffix = "div > div > div > div:nth-child(4) > div > div:nth-child(1) > div:nth-child(1) > input";
+    for (let n = 1; n <= 6; n++) {
+      const el = document.querySelector(`#app > div > div:nth-child(${n}) > ${suffix}`);
+      if (el) { cachedSearchBar = el; return el; }
+    }
+    return null;
+  }
+
   let cachedChatContainer = null;
   function findChatContainer() {
     if (cachedChatContainer && cachedChatContainer.isConnected && cachedChatContainer.children.length > 0) {
@@ -1155,6 +1188,12 @@
 
       setSalePopup(title, saleAmount, costAmount, net, diff, currency, bidCount);
       if (panelVisible) renderPanel();
+      try {
+        if (localStorage.getItem(FOCUS_SEARCH_KEY) === "1") {
+          const searchBar = findSearchBar();
+          if (searchBar) searchBar.focus();
+        }
+      } catch {}
     }
 
     if (!isZero && timerText && !auctionStartTime) {
