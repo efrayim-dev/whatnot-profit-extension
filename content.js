@@ -755,7 +755,49 @@
     });
 
     if (settingsVisible && !isViewing) renderSettingsSection(panel);
-    if (!isViewing) renderPastSessions(panel);
+    if (!isViewing) {
+      renderPastSessions(panel);
+      renderPrimaryDeviceSection(panel);
+    }
+  }
+
+  function renderPrimaryDeviceSection(panel) {
+    const isPrimary = (() => { try { return localStorage.getItem(DEVICE_PRIORITY_KEY) === "1"; } catch { return false; } })();
+    const wrapper = document.createElement("div");
+    wrapper.style.cssText = "margin-top:12px;padding:8px 10px;border-top:1px solid rgba(255,255,255,0.08);";
+
+    if (isPrimary) {
+      wrapper.innerHTML = `
+        <div style="display:flex;align-items:center;gap:6px;font-size:11px;">
+          <span style="color:#86efac;">\u2713 Primary device active</span>
+          <button data-action="revoke-primary" style="font-size:10px;padding:2px 6px;background:#374151;color:#e2e8f0;border:1px solid #4b5563;border-radius:4px;cursor:pointer;">Revoke</button>
+        </div>`;
+      panel.appendChild(wrapper);
+      wrapper.querySelector('[data-action="revoke-primary"]').addEventListener("click", () => {
+        try { localStorage.setItem(DEVICE_PRIORITY_KEY, "0"); } catch {}
+        renderPanel();
+      });
+    } else {
+      wrapper.innerHTML = `
+        <div style="font-size:11px;color:#94a3b8;margin-bottom:4px;">Enable primary device</div>
+        <div style="display:flex;gap:4px;align-items:center;">
+          <input type="password" id="wn-primary-key" placeholder="Enter key" style="flex:1;padding:3px 6px;font-size:11px;background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:4px;" />
+          <button data-action="unlock-primary" style="font-size:10px;padding:3px 8px;background:#374151;color:#e2e8f0;border:1px solid #4b5563;border-radius:4px;cursor:pointer;">Unlock</button>
+        </div>
+        <div class="primary-msg" style="font-size:10px;margin-top:4px;"></div>`;
+      panel.appendChild(wrapper);
+      wrapper.querySelector('[data-action="unlock-primary"]').addEventListener("click", () => {
+        const input = wrapper.querySelector("#wn-primary-key");
+        const msg = wrapper.querySelector(".primary-msg");
+        if (input.value === "efrayimwhatnot") {
+          try { localStorage.setItem(DEVICE_PRIORITY_KEY, "1"); } catch {}
+          renderPanel();
+        } else {
+          msg.textContent = "Incorrect key.";
+          msg.style.color = "#fda4af";
+        }
+      });
+    }
   }
 
   function renderPastSessions(panel) {
@@ -794,7 +836,6 @@
     const sheetsBar = panel.querySelector(".sheets-bar");
     if (!sheetsBar) return;
 
-    const isPrimary = (() => { try { return localStorage.getItem(DEVICE_PRIORITY_KEY) === "1"; } catch { return false; } })();
     section = document.createElement("div");
     section.className = "settings-section";
     section.innerHTML = `
@@ -808,12 +849,6 @@
       <div class="hint">
         To set up: go to script.google.com, create a new project, paste the code from
         google-apps-script.js, deploy as Web App, and paste the URL above.
-      </div>
-      <div style="margin-top:8px;display:flex;align-items:center;gap:6px;">
-        <input type="checkbox" id="wn-primary-device-cb" ${isPrimary ? "checked" : ""} />
-        <label for="wn-primary-device-cb" style="font-size:11px;cursor:pointer;">
-          Primary device (my sales overwrite backup device's data)
-        </label>
       </div>
       <div class="settings-msg" style="margin-top:6px;font-size:11px;"></div>
     `;
@@ -872,11 +907,6 @@
       });
     }
 
-    section.querySelector("#wn-primary-device-cb").addEventListener("change", (e) => {
-      try { localStorage.setItem(DEVICE_PRIORITY_KEY, e.target.checked ? "1" : "0"); } catch {}
-      msgEl.textContent = e.target.checked ? "This device is now Primary." : "This device is now Secondary (backup).";
-      msgEl.style.color = "#86efac";
-    });
   }
 
   function exportCsv(s) {
