@@ -117,15 +117,16 @@
 
   function syncSessionSummary() {
     if (!session) return;
+    const { revenue, cost, net, profit } = computeTotals(session);
     sendToBackground("SYNC_SESSION_SUMMARY", {
       type: "session_summary",
       sessionId: `${session.liveId}-${session.startedAt}`,
       startedAt: session.startedAt,
       totalSales: session.sales.length,
-      totalRevenue: session.totalRevenue,
-      totalCost: session.totalCost,
-      totalNet: session.totalNet,
-      totalProfit: session.totalProfit,
+      totalRevenue: revenue,
+      totalCost: cost,
+      totalNet: net,
+      totalProfit: profit,
       avgAuction: avg(session.auctionDurations),
       avgGap: avg(session.gapDurations)
     }, (resp) => {
@@ -235,6 +236,20 @@
   function avg(arr) {
     if (!arr.length) return null;
     return arr.reduce((a, b) => a + b, 0) / arr.length;
+  }
+
+  // Recompute totals from the raw sales array so Revenue/Cost/Profit
+  // are always internally consistent, regardless of how they were accumulated.
+  function computeTotals(s) {
+    let revenue = 0, cost = 0, bids = 0;
+    for (const sale of (s.sales || [])) {
+      if (typeof sale.saleAmount === "number") revenue += sale.saleAmount;
+      if (typeof sale.costAmount === "number") cost += sale.costAmount;
+      if (typeof sale.bidCount === "number") bids += sale.bidCount;
+    }
+    const net = revenue * FEE_MULTIPLIER;
+    const profit = net - cost;
+    return { revenue, cost, net, profit, bids };
   }
 
   /* ── Helpers ─────────────────────────────────────────── */
@@ -644,7 +659,8 @@
     const saleCount = s.sales.length;
     const avgDuration = avg(s.auctionDurations);
     const avgGap = avg(s.gapDurations);
-    const profitClass = s.totalProfit >= 0 ? "ok" : "bad";
+    const { revenue: dispRevenue, cost: dispCost, profit: dispProfit, bids: dispBids } = computeTotals(s);
+    const profitClass = dispProfit >= 0 ? "ok" : "bad";
     const isViewing = viewSession && viewSession !== session;
 
     let html = `
@@ -669,19 +685,19 @@
         </div>
         <div class="stat-box">
           <div class="stat-label">Total Profit</div>
-          <div class="stat-value ${profitClass}">${formatMoney(s.totalProfit, "USD")}</div>
+          <div class="stat-value ${profitClass}">${formatMoney(dispProfit, "USD")}</div>
         </div>
         <div class="stat-box">
           <div class="stat-label">Revenue</div>
-          <div class="stat-value">${formatMoney(s.totalRevenue, "USD")}</div>
+          <div class="stat-value">${formatMoney(dispRevenue, "USD")}</div>
         </div>
         <div class="stat-box">
           <div class="stat-label">Total Cost</div>
-          <div class="stat-value">${formatMoney(s.totalCost, "USD")}</div>
+          <div class="stat-value">${formatMoney(dispCost, "USD")}</div>
         </div>
         <div class="stat-box">
           <div class="stat-label">Total Bids</div>
-          <div class="stat-value">${s.totalBids || 0}</div>
+          <div class="stat-value">${dispBids}</div>
         </div>
         <div class="stat-box">
           <div class="stat-label">Avg Auction</div>
@@ -744,11 +760,12 @@
     for (let i = past.length - 1; i >= 0; i--) {
       const s = past[i];
       const d = new Date(s.startedAt).toLocaleString();
-      const profitClass = s.totalProfit >= 0 ? "ok" : "bad";
+      const { revenue: pRev, profit: pProfit } = computeTotals(s);
+      const profitClass = pProfit >= 0 ? "ok" : "bad";
       html += `
         <div class="past-session-entry" data-idx="${i}">
           <div class="ps-date">${d}</div>
-          <div class="ps-stats">${s.sales.length} sales \u00B7 Profit: <span class="${profitClass}">${formatMoney(s.totalProfit, "USD")}</span> \u00B7 Revenue: ${formatMoney(s.totalRevenue, "USD")}</div>
+          <div class="ps-stats">${s.sales.length} sales \u00B7 Profit: <span class="${profitClass}">${formatMoney(pProfit, "USD")}</span> \u00B7 Revenue: ${formatMoney(pRev, "USD")}</div>
         </div>`;
     }
     html += `</div>`;
