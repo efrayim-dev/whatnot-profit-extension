@@ -1,4 +1,4 @@
-const WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbyFr8tA3nQw7buSd_5SOmjDok_RF5s9nhfYF3acEMw8T94NuLUAZycGqz-s3HASPE07/exec";
+const WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbzSOPc9lvs9fU6S5quI0lj8RBQ_O_RbI34RNfCHzUy9eqVanHhKXltUe9D1vrXcOZ9zqw/exec";
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === "GET_WEBHOOK_URL") {

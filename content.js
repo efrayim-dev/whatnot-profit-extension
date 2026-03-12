@@ -32,7 +32,7 @@
   let lastSaleTime = null;
   let panelVisible = false;
   let settingsVisible = false;
-  const DEFAULT_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbyFr8tA3nQw7buSd_5SOmjDok_RF5s9nhfYF3acEMw8T94NuLUAZycGqz-s3HASPE07/exec";
+  const DEFAULT_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbzSOPc9lvs9fU6S5quI0lj8RBQ_O_RbI34RNfCHzUy9eqVanHhKXltUe9D1vrXcOZ9zqw/exec";
   let webhookUrl = DEFAULT_WEBHOOK_URL;
   let sheetsConnected = true;
 
@@ -870,34 +870,45 @@
     if (!fullText) return null;
 
     let username = "";
-    const img = node.querySelector("img[alt*='profile image']");
-    if (img) {
+
+    const imgs = node.querySelectorAll("img[alt*='profile image']");
+    for (const img of imgs) {
       const alt = img.getAttribute("alt") || "";
-      username = alt.replace(/\s*profile image\s*$/i, "").trim();
+      const name = alt.replace(/\s*profile image\s*$/i, "").trim();
+      if (name && name.length >= 2) { username = name; break; }
     }
 
-    if (!username) {
-      const allEls = node.querySelectorAll("*");
-      for (const el of allEls) {
-        if (el.children.length > 0) continue;
-        const t = (el.textContent || "").trim();
-        if (t && t.length >= 2 && t.length < 30 && /^[@\w._-]+$/.test(t) && !/^(Mod|VIP|Host|Creator)$/i.test(t)) {
-          username = t;
-          break;
-        }
-      }
+    const avatarContainer = node.querySelector("img[alt*='profile image'], img[alt*='profile']");
+    const avatarParent = avatarContainer ? avatarContainer.closest("div") : null;
+
+    const skipEls = new Set();
+    if (avatarParent) {
+      avatarParent.querySelectorAll("*").forEach(el => skipEls.add(el));
+      skipEls.add(avatarParent);
     }
 
     const badges = /^(Mod|VIP|Host|Creator)$/i;
-    const leafEls = [];
+    const leafTexts = [];
     const allEls = node.querySelectorAll("*");
     for (const el of allEls) {
       if (el.children.length > 0) continue;
+      if (skipEls.has(el)) continue;
+      if (el.tagName === "IMG") continue;
       const t = (el.textContent || "").trim();
-      if (t && !badges.test(t) && t !== username) leafEls.push(t);
+      if (!t) continue;
+      if (badges.test(t)) continue;
+      leafTexts.push(t);
     }
-    const message = leafEls.join(" ").trim() || fullText;
 
+    if (!username && leafTexts.length >= 2) {
+      const first = leafTexts[0];
+      if (first.length >= 3 && first.length < 25 && /^[@\w._-]+$/.test(first)) {
+        username = first;
+        leafTexts.shift();
+      }
+    }
+
+    const message = leafTexts.join(" ").trim() || fullText;
     return { timestamp: Date.now(), username, text: message };
   }
 

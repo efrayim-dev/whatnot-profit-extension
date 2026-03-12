@@ -39,40 +39,17 @@ function doPost(e) {
 }
 
 function getOrCreateSpreadsheet() {
-  const props = PropertiesService.getScriptProperties();
-  let ssId = props.getProperty("SPREADSHEET_ID");
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (ss) return ss;
 
+  var props = PropertiesService.getScriptProperties();
+  var ssId = props.getProperty("SPREADSHEET_ID");
   if (ssId) {
-    try {
-      return SpreadsheetApp.openById(ssId);
-    } catch (_) {}
+    try { return SpreadsheetApp.openById(ssId); } catch (_) {}
   }
 
-  const ss = SpreadsheetApp.create("Whatnot Sales Tracker");
+  ss = SpreadsheetApp.create("Whatnot Sales Tracker");
   props.setProperty("SPREADSHEET_ID", ss.getId());
-
-  const salesSheet = ss.getActiveSheet();
-  salesSheet.setName("Sales");
-  salesSheet.appendRow([
-    "Timestamp", "Session ID", "Item", "Sale Price", "Cost",
-    "Net (after 15%)", "Profit", "Bids", "Auction Duration (s)", "Gap From Last (s)"
-  ]);
-  salesSheet.getRange("1:1").setFontWeight("bold");
-  salesSheet.setFrozenRows(1);
-
-  const summarySheet = ss.insertSheet("Sessions");
-  summarySheet.appendRow([
-    "Session Start", "Session ID", "Total Sales", "Total Revenue",
-    "Total Cost", "Total Net", "Total Profit", "Avg Auction (s)", "Avg Gap (s)"
-  ]);
-  summarySheet.getRange("1:1").setFontWeight("bold");
-  summarySheet.setFrozenRows(1);
-
-  const chatSheet = ss.insertSheet("Chat");
-  chatSheet.appendRow(["Timestamp", "Session ID", "Username", "Message"]);
-  chatSheet.getRange("1:1").setFontWeight("bold");
-  chatSheet.setFrozenRows(1);
-
   return ss;
 }
 
