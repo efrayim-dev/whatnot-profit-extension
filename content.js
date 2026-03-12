@@ -1275,6 +1275,9 @@
       const cached = (itemNum && titleToListingCache.get(itemNum)) || titleToListingCache.get(domTitle);
       if (!cached) {
         console.log("[WN Profit] item not in inventory cache", { domTitle: domTitle.slice(0, 60), itemNum, cacheSize: titleToListingCache.size });
+        currentListingId = null;
+        currentListingCost = null;
+        setCurrentItemPopup(domTitle, null);
         return;
       }
       const listingId = decodeRelayListingId(cached.id);
