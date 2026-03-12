@@ -663,6 +663,10 @@
           <div class="stat-value">${formatDuration(avgDuration)}</div>
         </div>
         <div class="stat-box">
+          <div class="stat-label">Peak Viewers</div>
+          <div class="stat-value">${s.highestViewers || "\u2014"}</div>
+        </div>
+        <div class="stat-box">
           <div class="stat-label">Avg Gap</div>
           <div class="stat-value">${formatDuration(avgGap)}</div>
         </div>
