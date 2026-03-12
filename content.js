@@ -8,6 +8,7 @@
   const FEE_MULTIPLIER = 0.85;
   const POLL_MS = 500;
   const STORAGE_KEY = "wn_profit_sessions";
+  const TOAST_POS_KEY = "wn_profit_toast_pos";
   const CHAT_SYNC_INTERVAL_MS = 30000;
 
   const listingCostCache = new Map();
@@ -283,9 +284,22 @@
         border: 1px solid rgba(148, 163, 184, 0.35);
         box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45);
         color: #e2e8f0;
-        padding: 10px 12px;
         font: 600 13px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         backdrop-filter: blur(6px);
+      }
+      .wn-profit-toast .wn-toast-drag {
+        cursor: move;
+        padding: 6px 12px 4px;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        opacity: 0.7;
+        user-select: none;
+      }
+      .wn-profit-toast .wn-toast-body {
+        padding: 10px 12px;
       }
       .wn-profit-toast .row { display: flex; justify-content: space-between; gap: 8px; }
       .wn-profit-toast .label { opacity: 0.78; font-weight: 500; }
@@ -411,15 +425,68 @@
       el.className = "wn-profit-toast";
       document.documentElement.appendChild(el);
     }
+    if (!el.querySelector(".wn-toast-drag")) {
+      const body = document.createElement("div");
+      body.className = "wn-toast-body";
+      while (el.firstChild) body.appendChild(el.firstChild);
+      el.innerHTML = "";
+      const dragHandle = document.createElement("div");
+      dragHandle.className = "wn-toast-drag";
+      dragHandle.textContent = "Move";
+      dragHandle.title = "Drag to move";
+      el.appendChild(dragHandle);
+      el.appendChild(body);
+    }
+    if (!el.dataset.dragInit) {
+      el.dataset.dragInit = "1";
+      try {
+        const pos = JSON.parse(localStorage.getItem(TOAST_POS_KEY) || "{}");
+        if (typeof pos.left === "number" && typeof pos.top === "number") {
+          el.style.left = pos.left + "px";
+          el.style.top = pos.top + "px";
+        }
+      } catch {}
+      const handle = el.querySelector(".wn-toast-drag");
+      handle.addEventListener("mousedown", (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        const startX = e.clientX - el.getBoundingClientRect().left;
+        const startY = e.clientY - el.getBoundingClientRect().top;
+        const onMove = (ev) => {
+          let left = ev.clientX - startX;
+          let top = ev.clientY - startY;
+          left = Math.max(0, Math.min(left, window.innerWidth - el.offsetWidth));
+          top = Math.max(0, Math.min(top, window.innerHeight - 40));
+          el.style.left = left + "px";
+          el.style.top = top + "px";
+        };
+        const onUp = () => {
+          document.removeEventListener("mousemove", onMove);
+          document.removeEventListener("mouseup", onUp);
+          try {
+            const rect = el.getBoundingClientRect();
+            localStorage.setItem(TOAST_POS_KEY, JSON.stringify({ left: rect.left, top: rect.top }));
+          } catch {}
+        };
+        document.addEventListener("mousemove", onMove);
+        document.addEventListener("mouseup", onUp);
+      });
+    }
     return el;
+  }
+
+  function getToastBody() {
+    const el = getPopupElement();
+    return el.querySelector(".wn-toast-body") || el;
   }
 
   function setPopup(html) {
     const el = getPopupElement();
+    const body = getToastBody();
     el.classList.remove("sale-profit", "sale-loss", "pulse");
     el.style.opacity = "1";
     el.style.transition = "";
-    el.innerHTML = html;
+    body.innerHTML = html;
   }
 
   function setStatusPopup(status, hint) {
@@ -441,10 +508,11 @@
 
   function setSalePopup(saleTitle, saleAmount, costAmount, netAmount, diffAmount, currency, bidCount) {
     const el = getPopupElement();
+    const body = getToastBody();
     el.classList.remove("sale-profit", "sale-loss", "pulse");
     el.style.opacity = "1";
     el.style.transition = "";
-    el.innerHTML =
+    body.innerHTML =
       `<div class="title">Sale Completed: ${escHtml(saleTitle)}</div>
        <div class="row"><span class="label">Sale</span><span>${formatMoney(saleAmount, currency)}</span></div>
        <div class="row"><span class="label">Cost</span><span>${typeof costAmount === "number" ? formatMoney(costAmount, currency) : "Not set"}</span></div>
