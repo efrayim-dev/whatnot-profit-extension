@@ -10,6 +10,7 @@
   const STORAGE_KEY = "wn_profit_sessions";
   const TOAST_POS_KEY = "wn_profit_toast_pos";
   const FOCUS_SEARCH_KEY = "wn_profit_focus_search";
+  const FOCUS_SEARCH_ON_START_KEY = "wn_profit_focus_search_on_start";
   const CHAT_SYNC_INTERVAL_MS = 30000;
 
   const listingCostCache = new Map();
@@ -71,6 +72,22 @@
   function sendToBackground(type, payload, cb) {
     if (!webhookUrl || typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return;
     chrome.runtime.sendMessage({ type, payload, webhookUrl }, cb || (() => {}));
+  }
+
+  function syncNoSaleToSheets(entry) {
+    sendToBackground("SYNC_SALE", {
+      ...entry,
+      title: "No sale (0 bids)",
+      saleAmount: 0,
+      costAmount: null,
+      netAmount: 0,
+      profit: null,
+      bidCount: 0,
+      sessionId: session ? `${session.liveId}-${session.startedAt}` : ""
+    }, (resp) => {
+      if (resp?.ok) console.log("[WN Profit] no-sale row synced to Sheets");
+      else console.log("[WN Profit] no-sale sync failed:", resp?.error);
+    });
   }
 
   function syncSaleToSheets(entry) {
@@ -300,6 +317,7 @@
         opacity: 0.9;
         user-select: none;
       }
+      .wn-profit-toast .wn-focus-toggles { display: flex; gap: 10px; }
       .wn-profit-toast .wn-focus-search-toggle {
         cursor: pointer;
         display: flex;
@@ -444,15 +462,25 @@
       dragHandle.className = "wn-toast-drag";
       dragHandle.innerHTML = `
         <span class="wn-drag-handle-text">Move</span>
-        <label class="wn-focus-search-toggle">
-          <input type="checkbox" id="wn-focus-search-cb" />
-          <span>Jump to search on sale</span>
-        </label>`;
+        <div class="wn-focus-toggles">
+          <label class="wn-focus-search-toggle">
+            <input type="checkbox" id="wn-focus-search-cb" />
+            <span>On sale</span>
+          </label>
+          <label class="wn-focus-search-toggle">
+            <input type="checkbox" id="wn-focus-search-start-cb" />
+            <span>On start</span>
+          </label>
+        </div>`;
       try {
         dragHandle.querySelector("#wn-focus-search-cb").checked = localStorage.getItem(FOCUS_SEARCH_KEY) === "1";
+        dragHandle.querySelector("#wn-focus-search-start-cb").checked = localStorage.getItem(FOCUS_SEARCH_ON_START_KEY) === "1";
       } catch {}
       dragHandle.querySelector("#wn-focus-search-cb").addEventListener("change", (e) => {
         try { localStorage.setItem(FOCUS_SEARCH_KEY, e.target.checked ? "1" : "0"); } catch {}
+      });
+      dragHandle.querySelector("#wn-focus-search-start-cb").addEventListener("change", (e) => {
+        try { localStorage.setItem(FOCUS_SEARCH_ON_START_KEY, e.target.checked ? "1" : "0"); } catch {}
       });
       el.appendChild(dragHandle);
       el.appendChild(body);
@@ -469,7 +497,7 @@
       const handle = el.querySelector(".wn-toast-drag");
       handle.addEventListener("mousedown", (e) => {
         if (e.button !== 0) return;
-        if (e.target.closest(".wn-focus-search-toggle")) return;
+        if (e.target.closest(".wn-focus-toggles")) return;
         e.preventDefault();
         const startX = e.clientX - el.getBoundingClientRect().left;
         const startY = e.clientY - el.getBoundingClientRect().top;
@@ -1175,29 +1203,42 @@
       lastSaleTime = now;
       auctionStartTime = null;
 
-      console.log("[WN Profit] sale detected (timer hit 00:00)", {
-        title: title?.slice(0, 60), priceText, saleAmount, bidCount,
-        cost: costAmount, net, profit: diff, auctionDuration, gapFromLast
-      });
+      const noBids = (bidCount ?? 0) === 0;
 
-      recordSale({
-        timestamp: now, title, saleAmount, costAmount,
-        netAmount: net, profit: diff, currency, bidCount,
-        auctionDuration, gapFromLast
-      });
-
-      setSalePopup(title, saleAmount, costAmount, net, diff, currency, bidCount);
-      if (panelVisible) renderPanel();
-      try {
-        if (localStorage.getItem(FOCUS_SEARCH_KEY) === "1") {
-          const searchBar = findSearchBar();
-          if (searchBar) searchBar.focus();
-        }
-      } catch {}
+      if (noBids) {
+        console.log("[WN Profit] auction ended with no bids", { title: title?.slice(0, 60), auctionDuration, gapFromLast });
+        syncNoSaleToSheets({
+          timestamp: now, title: title + " (no sale)", auctionDuration, gapFromLast
+        });
+      } else {
+        console.log("[WN Profit] sale detected (timer hit 00:00)", {
+          title: title?.slice(0, 60), priceText, saleAmount, bidCount,
+          cost: costAmount, net, profit: diff, auctionDuration, gapFromLast
+        });
+        recordSale({
+          timestamp: now, title, saleAmount, costAmount,
+          netAmount: net, profit: diff, currency, bidCount,
+          auctionDuration, gapFromLast
+        });
+        setSalePopup(title, saleAmount, costAmount, net, diff, currency, bidCount);
+        if (panelVisible) renderPanel();
+        try {
+          if (localStorage.getItem(FOCUS_SEARCH_KEY) === "1") {
+            const searchBar = findSearchBar();
+            if (searchBar) searchBar.focus();
+          }
+        } catch {}
+      }
     }
 
     if (!isZero && timerText && !auctionStartTime) {
       auctionStartTime = Date.now();
+      try {
+        if (localStorage.getItem(FOCUS_SEARCH_ON_START_KEY) === "1") {
+          const searchBar = findSearchBar();
+          if (searchBar) searchBar.focus();
+        }
+      } catch {}
     }
 
     if (!isZero && timerText) {
