@@ -11,6 +11,7 @@
   const TOAST_POS_KEY = "wn_profit_toast_pos";
   const FOCUS_SEARCH_KEY = "wn_profit_focus_search";
   const FOCUS_SEARCH_ON_START_KEY = "wn_profit_focus_search_on_start";
+  const DEVICE_PRIORITY_KEY = "wn_profit_device_priority";
   const CHAT_SYNC_INTERVAL_MS = 30000;
 
   const listingCostCache = new Map();
@@ -24,6 +25,7 @@
   let currentListingId = null;
   let currentListingCost = null;
   let currentListingCurrency = "USD";
+  let currentListingDescription = null;
   let lastDomTitle = null;
   let lastTimerText = null;
   let saleAlreadyFired = false;
@@ -78,12 +80,17 @@
     return `${sessionId}|${Math.round((timestamp || Date.now()) / 5000)}`;
   }
 
+  function getDevicePriority() {
+    try { return localStorage.getItem(DEVICE_PRIORITY_KEY) === "1" ? "primary" : "secondary"; } catch { return "secondary"; }
+  }
+
   function syncNoSaleToSheets(entry) {
     const sessionId = session ? `${session.liveId}-${session.startedAt}` : "";
     sendToBackground("SYNC_SALE", {
       timestamp: entry.timestamp,
       sessionId,
       saleId: makeSaleId(sessionId, entry.timestamp),
+      priority: getDevicePriority(),
       title: entry.title || "No sale",
       saleAmount: null,
       costAmount: null,
@@ -104,7 +111,8 @@
     sendToBackground("SYNC_SALE", {
       ...entry,
       sessionId,
-      saleId: makeSaleId(sessionId, entry.timestamp)
+      saleId: makeSaleId(sessionId, entry.timestamp),
+      priority: getDevicePriority()
     }, (resp) => {
       if (chrome.runtime.lastError) {
         console.log("[WN Profit] runtime error:", chrome.runtime.lastError.message);
@@ -786,6 +794,7 @@
     const sheetsBar = panel.querySelector(".sheets-bar");
     if (!sheetsBar) return;
 
+    const isPrimary = (() => { try { return localStorage.getItem(DEVICE_PRIORITY_KEY) === "1"; } catch { return false; } })();
     section = document.createElement("div");
     section.className = "settings-section";
     section.innerHTML = `
@@ -799,6 +808,12 @@
       <div class="hint">
         To set up: go to script.google.com, create a new project, paste the code from
         google-apps-script.js, deploy as Web App, and paste the URL above.
+      </div>
+      <div style="margin-top:8px;display:flex;align-items:center;gap:6px;">
+        <input type="checkbox" id="wn-primary-device-cb" ${isPrimary ? "checked" : ""} />
+        <label for="wn-primary-device-cb" style="font-size:11px;cursor:pointer;">
+          Primary device (my sales overwrite backup device's data)
+        </label>
       </div>
       <div class="settings-msg" style="margin-top:6px;font-size:11px;"></div>
     `;
@@ -856,11 +871,17 @@
         msgEl.style.color = "#e2e8f0";
       });
     }
+
+    section.querySelector("#wn-primary-device-cb").addEventListener("change", (e) => {
+      try { localStorage.setItem(DEVICE_PRIORITY_KEY, e.target.checked ? "1" : "0"); } catch {}
+      msgEl.textContent = e.target.checked ? "This device is now Primary." : "This device is now Secondary (backup).";
+      msgEl.style.color = "#86efac";
+    });
   }
 
   function exportCsv(s) {
     if (!s || !s.sales.length) return;
-    const headers = ["Timestamp", "Session ID", "Item", "Sale Price", "Cost", "Net (after 15%)", "Profit", "Bids", "Auction Duration (s)", "Gap From Last (s)"];
+    const headers = ["Timestamp", "Session ID", "Item", "Sale Price", "Cost", "Net (after 15%)", "Profit", "Bids", "Auction Duration (s)", "Gap From Last (s)", "Description"];
     const rows = [headers];
     const sessionId = s.liveId ? `${s.liveId}-${s.startedAt}` : "";
     const round2 = (n) => (typeof n === "number" && !isNaN(n) ? Math.round(n * 100) / 100 : "");
@@ -876,7 +897,8 @@
         typeof e.profit === "number" ? round2(e.profit) : "",
         typeof e.bidCount === "number" ? e.bidCount : "",
         typeof e.auctionDuration === "number" ? Math.round(e.auctionDuration / 1000) : "",
-        typeof e.gapFromLast === "number" ? Math.round(e.gapFromLast / 1000) : ""
+        typeof e.gapFromLast === "number" ? Math.round(e.gapFromLast / 1000) : "",
+        esc(e.description || "")
       ]);
     });
     rows.push([]);
@@ -954,6 +976,7 @@
   const DOM_TITLE_SELECTOR = "#bottom-section-stream-container > div > div:nth-child(1) > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div > div > div:nth-child(1)";
   const DOM_BID_COUNT_SELECTOR = "#bottom-section-stream-container > div > div:nth-child(1) > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div > div > div:nth-child(1) > div > p";
   const DOM_PRICE_SELECTOR = "#bottom-section-stream-container > div > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div:nth-child(1) > div:nth-child(2)";
+  const DOM_DESCRIPTION_SELECTOR = "#bottom-section-stream-container > div > div > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div > div > div:nth-child(2) > div:nth-child(4)";
   const TIMER_PATTERN = /^\d{1,2}:\d{2}$/;
   const TIMER_CONTAINER = "#bottom-section-stream-container";
   let cachedTimerEl = null;
@@ -1011,6 +1034,11 @@
     const el = document.querySelector(DOM_PRICE_SELECTOR);
     if (!el) return null;
     return (el.textContent || "").trim() || null;
+  }
+
+  function getDomDescription() {
+    const el = document.querySelector(DOM_DESCRIPTION_SELECTOR);
+    return el ? (el.textContent || "").trim() || null : null;
   }
 
   function getDomTimer() {
@@ -1243,9 +1271,9 @@
           cost: costAmount, net, profit: diff, auctionDuration, gapFromLast
         });
         recordSale({
-          timestamp: now, title, saleAmount, costAmount,
-          netAmount: net, profit: diff, currency, bidCount,
-          auctionDuration, gapFromLast
+          timestamp: now, title, description: currentListingDescription,
+          saleAmount, costAmount, netAmount: net, profit: diff,
+          currency, bidCount, auctionDuration, gapFromLast
         });
         setSalePopup(title, saleAmount, costAmount, net, diff, currency, bidCount);
         if (panelVisible) renderPanel();
@@ -1294,6 +1322,7 @@
         console.log("[WN Profit] item not in inventory cache", { domTitle: domTitle.slice(0, 60), itemNum, cacheSize: titleToListingCache.size });
         currentListingId = null;
         currentListingCost = null;
+        currentListingDescription = null;
         setCurrentItemPopup(domTitle, null);
         return;
       }
@@ -1304,6 +1333,7 @@
       currentListingId = listingId;
       currentListingCost = cost;
       currentListingCurrency = cost?.currency || "USD";
+      currentListingDescription = getDomDescription();
       setCurrentItemPopup(domTitle, cost);
       console.log("[WN Profit] item changed", {
         domText: domTitle.slice(0, 80), itemNum, listingId, cost: cost?.amountCents ?? null
@@ -1332,6 +1362,7 @@
     saleAlreadyFired = false;
     auctionStartTime = null;
     lastSaleTime = null;
+    currentListingDescription = null;
     chatBuffer = [];
     currentLiveId = liveId;
 
