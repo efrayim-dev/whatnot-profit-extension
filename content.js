@@ -704,17 +704,20 @@
 
   function exportCsv(s) {
     if (!s || !s.sales.length) return;
-    const rows = [["#", "Time", "Item", "Sale", "Cost", "Net", "Profit", "Bids", "Auction Duration (s)", "Gap (s)"]];
-    s.sales.forEach((e, i) => {
+    const headers = ["Timestamp", "Session ID", "Item", "Sale Price", "Cost", "Net (after 15%)", "Profit", "Bids", "Auction Duration (s)", "Gap From Last (s)"];
+    const rows = [headers];
+    const sessionId = s.liveId ? `${s.liveId}-${s.startedAt}` : "";
+    const round2 = (n) => (typeof n === "number" && !isNaN(n) ? Math.round(n * 100) / 100 : "");
+    s.sales.forEach((e) => {
       rows.push([
-        i + 1,
-        new Date(e.timestamp).toLocaleString(),
+        e.timestamp ? new Date(e.timestamp).toLocaleString() : "",
+        sessionId,
         `"${(e.title || "").replace(/"/g, '""')}"`,
-        e.saleAmount ?? "",
-        e.costAmount ?? "",
-        e.netAmount ?? "",
-        e.profit ?? "",
-        e.bidCount ?? "",
+        typeof e.saleAmount === "number" ? round2(e.saleAmount) : "",
+        typeof e.costAmount === "number" ? round2(e.costAmount) : "",
+        typeof e.netAmount === "number" ? round2(e.netAmount) : "",
+        typeof e.profit === "number" ? round2(e.profit) : "",
+        typeof e.bidCount === "number" ? e.bidCount : "",
         typeof e.auctionDuration === "number" ? Math.round(e.auctionDuration / 1000) : "",
         typeof e.gapFromLast === "number" ? Math.round(e.gapFromLast / 1000) : ""
       ]);
