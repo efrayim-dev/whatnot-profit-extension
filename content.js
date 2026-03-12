@@ -76,14 +76,16 @@
 
   function syncNoSaleToSheets(entry) {
     sendToBackground("SYNC_SALE", {
-      ...entry,
-      title: "No sale (0 bids)",
-      saleAmount: 0,
+      timestamp: entry.timestamp,
+      sessionId: session ? `${session.liveId}-${session.startedAt}` : "",
+      title: entry.title || "No sale",
+      saleAmount: null,
       costAmount: null,
-      netAmount: 0,
+      netAmount: null,
       profit: null,
-      bidCount: 0,
-      sessionId: session ? `${session.liveId}-${session.startedAt}` : ""
+      bidCount: null,
+      auctionDuration: entry.auctionDuration,
+      gapFromLast: entry.gapFromLast
     }, (resp) => {
       if (resp?.ok) console.log("[WN Profit] no-sale row synced to Sheets");
       else console.log("[WN Profit] no-sale sync failed:", resp?.error);
@@ -1208,7 +1210,7 @@
       if (noBids) {
         console.log("[WN Profit] auction ended with no bids", { title: title?.slice(0, 60), auctionDuration, gapFromLast });
         syncNoSaleToSheets({
-          timestamp: now, title: title + " (no sale)", auctionDuration, gapFromLast
+          timestamp: now, title, auctionDuration, gapFromLast
         });
       } else {
         console.log("[WN Profit] sale detected (timer hit 00:00)", {
