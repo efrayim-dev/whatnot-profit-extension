@@ -465,7 +465,7 @@
         <div class="wn-focus-toggles">
           <label class="wn-focus-search-toggle">
             <input type="checkbox" id="wn-focus-search-cb" />
-            <span>On sale</span>
+            <span>On auction end</span>
           </label>
           <label class="wn-focus-search-toggle">
             <input type="checkbox" id="wn-focus-search-start-cb" />
@@ -1222,15 +1222,16 @@
         });
         setSalePopup(title, saleAmount, costAmount, net, diff, currency, bidCount);
         if (panelVisible) renderPanel();
-        try {
-          if (localStorage.getItem(FOCUS_SEARCH_KEY) === "1") {
-            setTimeout(() => {
-              const searchBar = findSearchBar();
-              if (searchBar) searchBar.focus();
-            }, 150);
-          }
-        } catch {}
       }
+
+      try {
+        if (localStorage.getItem(FOCUS_SEARCH_KEY) === "1") {
+          setTimeout(() => {
+            const searchBar = findSearchBar();
+            if (searchBar) searchBar.focus();
+          }, 150);
+        }
+      } catch {}
     }
 
     if (!isZero && timerText && !auctionStartTime) {
