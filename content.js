@@ -1224,8 +1224,10 @@
         if (panelVisible) renderPanel();
         try {
           if (localStorage.getItem(FOCUS_SEARCH_KEY) === "1") {
-            const searchBar = findSearchBar();
-            if (searchBar) searchBar.focus();
+            setTimeout(() => {
+              const searchBar = findSearchBar();
+              if (searchBar) searchBar.focus();
+            }, 150);
           }
         } catch {}
       }
