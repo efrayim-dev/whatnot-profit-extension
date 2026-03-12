@@ -1,8 +1,6 @@
-const WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbzSOPc9lvs9fU6S5quI0lj8RBQ_O_RbI34RNfCHzUy9eqVanHhKXltUe9D1vrXcOZ9zqw/exec";
-
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === "GET_WEBHOOK_URL") {
-    sendResponse({ url: WEBHOOK_URL });
+    sendResponse({ url: msg.webhookUrl || "" });
     return true;
   }
 
@@ -12,10 +10,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.type === "SYNC_SALE" || msg.type === "SYNC_SESSION_SUMMARY" || msg.type === "SYNC_CHAT") {
-    const bodyStr = JSON.stringify(msg.payload);
-    console.log("[WN Background] sending", msg.type, "to", WEBHOOK_URL.slice(0, 60), "body:", bodyStr.slice(0, 200));
+    const url = msg.webhookUrl;
+    if (!url) {
+      console.log("[WN Background]", msg.type, "skipped — no webhook URL in message");
+      sendResponse({ ok: false, error: "no webhook URL" });
+      return true;
+    }
 
-    fetch(WEBHOOK_URL, {
+    const bodyStr = JSON.stringify(msg.payload);
+    console.log("[WN Background] sending", msg.type, "to", url.slice(0, 60), "body:", bodyStr.slice(0, 200));
+
+    fetch(url, {
       method: "POST",
       headers: { "Content-Type": "text/plain" },
       body: bodyStr,

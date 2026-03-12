@@ -12,6 +12,7 @@
   const FOCUS_SEARCH_KEY = "wn_profit_focus_search";
   const FOCUS_SEARCH_ON_START_KEY = "wn_profit_focus_search_on_start";
   const DEVICE_PRIORITY_KEY = "wn_profit_device_priority";
+  const VIEW_START_KEY = "wn_profit_view_start";
   const CHAT_SYNC_INTERVAL_MS = 30000;
 
   const listingCostCache = new Map();
@@ -71,10 +72,45 @@
     }
   }
 
+  const syncRetryQueue = [];
+  const MAX_RETRIES = 3;
+  const RETRY_INTERVAL_MS = 15000;
+
   function sendToBackground(type, payload, cb) {
     if (!webhookUrl || typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return;
     chrome.runtime.sendMessage({ type, payload, webhookUrl }, cb || (() => {}));
   }
+
+  function sendWithRetry(type, payload, cb) {
+    sendToBackground(type, payload, (resp) => {
+      if (resp?.ok) {
+        if (cb) cb(resp);
+      } else {
+        console.log("[WN Profit] sync failed, queuing retry:", type);
+        syncRetryQueue.push({ type, payload, retries: 0 });
+        if (cb) cb(resp);
+      }
+    });
+  }
+
+  function processSyncRetries() {
+    if (!syncRetryQueue.length) return;
+    const item = syncRetryQueue[0];
+    sendToBackground(item.type, item.payload, (resp) => {
+      if (resp?.ok) {
+        syncRetryQueue.shift();
+        console.log("[WN Profit] retry succeeded:", item.type, "remaining:", syncRetryQueue.length);
+      } else {
+        item.retries++;
+        if (item.retries >= MAX_RETRIES) {
+          console.log("[WN Profit] retry exhausted after", MAX_RETRIES, "attempts, dropping:", item.type);
+          syncRetryQueue.shift();
+        }
+      }
+    });
+  }
+
+  setInterval(processSyncRetries, RETRY_INTERVAL_MS);
 
   function makeSaleId(sessionId, timestamp) {
     return `${sessionId}|${Math.round((timestamp || Date.now()) / 5000)}`;
@@ -86,7 +122,7 @@
 
   function syncNoSaleToSheets(entry) {
     const sessionId = session ? `${session.liveId}-${session.startedAt}` : "";
-    sendToBackground("SYNC_SALE", {
+    sendWithRetry("SYNC_SALE", {
       timestamp: entry.timestamp,
       sessionId,
       saleId: makeSaleId(sessionId, entry.timestamp),
@@ -97,6 +133,7 @@
       netAmount: null,
       profit: null,
       bidCount: null,
+      viewers: entry.viewers,
       auctionDuration: entry.auctionDuration,
       gapFromLast: entry.gapFromLast
     }, (resp) => {
@@ -108,7 +145,7 @@
   function syncSaleToSheets(entry) {
     console.log("[WN Profit] attempting sale sync, webhookUrl:", webhookUrl ? "set" : "NOT SET");
     const sessionId = session ? `${session.liveId}-${session.startedAt}` : "";
-    sendToBackground("SYNC_SALE", {
+    sendWithRetry("SYNC_SALE", {
       ...entry,
       sessionId,
       saleId: makeSaleId(sessionId, entry.timestamp),
@@ -126,7 +163,7 @@
   function syncSessionSummary() {
     if (!session) return;
     const { revenue, cost, net, profit } = computeTotals(session);
-    sendToBackground("SYNC_SESSION_SUMMARY", {
+    sendWithRetry("SYNC_SESSION_SUMMARY", {
       type: "session_summary",
       sessionId: `${session.liveId}-${session.startedAt}`,
       startedAt: session.startedAt,
@@ -146,7 +183,7 @@
   function syncChatBatch() {
     if (!chatBuffer.length) return;
     const batch = chatBuffer.splice(0);
-    sendToBackground("SYNC_CHAT", {
+    sendWithRetry("SYNC_CHAT", {
       sessionId: session ? `${session.liveId}-${session.startedAt}` : "",
       messages: batch
     }, (resp) => {
@@ -172,8 +209,11 @@
     };
   }
 
+  let pastSessionsCache = null;
+
   function saveSession() {
     if (!session) return;
+    pastSessionsCache = null;
     try {
       const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
       const idx = stored.findIndex(s => s.liveId === session.liveId);
@@ -190,6 +230,7 @@
   }
 
   function loadPastSessions() {
+    if (pastSessionsCache) return pastSessionsCache;
     try {
       const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
       const merged = new Map();
@@ -212,6 +253,7 @@
       if (result.length !== raw.length) {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(result));
       }
+      pastSessionsCache = result;
       return result;
     } catch { return []; }
   }
@@ -250,14 +292,26 @@
   // are always internally consistent, regardless of how they were accumulated.
   function computeTotals(s) {
     let revenue = 0, cost = 0, bids = 0;
+    let highest = -Infinity, lowest = Infinity, salesWithAmount = 0;
     for (const sale of (s.sales || [])) {
-      if (typeof sale.saleAmount === "number") revenue += sale.saleAmount;
+      if (typeof sale.saleAmount === "number") {
+        revenue += sale.saleAmount;
+        salesWithAmount++;
+        if (sale.saleAmount > highest) highest = sale.saleAmount;
+        if (sale.saleAmount < lowest) lowest = sale.saleAmount;
+      }
       if (typeof sale.costAmount === "number") cost += sale.costAmount;
       if (typeof sale.bidCount === "number") bids += sale.bidCount;
     }
     const net = revenue * FEE_MULTIPLIER;
     const profit = net - cost;
-    return { revenue, cost, net, profit, bids };
+    const avgSale = salesWithAmount > 0 ? revenue / salesWithAmount : 0;
+    return {
+      revenue, cost, net, profit, bids, avgSale,
+      highest: highest === -Infinity ? 0 : highest,
+      lowest: lowest === Infinity ? 0 : lowest,
+      salesWithAmount
+    };
   }
 
   /* ── Helpers ─────────────────────────────────────────── */
@@ -319,165 +373,9 @@
 
   /* ── UI ─────────────────────────────────────────────── */
 
-  function ensureToastStyles() {
-    if (document.getElementById("wn-profit-toast-style")) return;
-    const style = document.createElement("style");
-    style.id = "wn-profit-toast-style";
-    style.textContent = `
-      .wn-profit-toast {
-        position: fixed;
-        left: 16px;
-        top: 16px;
-        z-index: 2147483647;
-        width: min(360px, calc(100vw - 32px));
-        border-radius: 12px;
-        background: rgba(15, 23, 42, 0.96);
-        border: 1px solid rgba(148, 163, 184, 0.35);
-        box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45);
-        color: #e2e8f0;
-        font: 600 13px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        backdrop-filter: blur(6px);
-      }
-      .wn-profit-toast .wn-toast-drag {
-        cursor: move;
-        padding: 6px 12px 4px;
-        border-bottom: 1px solid rgba(148, 163, 184, 0.2);
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 8px;
-        font-size: 11px;
-        opacity: 0.9;
-        user-select: none;
-      }
-      .wn-profit-toast .wn-focus-toggles { display: flex; gap: 10px; }
-      .wn-profit-toast .wn-focus-search-toggle {
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        white-space: nowrap;
-      }
-      .wn-profit-toast .wn-focus-search-toggle input { cursor: pointer; }
-      .wn-profit-toast .wn-toast-body {
-        padding: 10px 12px;
-      }
-      .wn-profit-toast .row { display: flex; justify-content: space-between; gap: 8px; }
-      .wn-profit-toast .label { opacity: 0.78; font-weight: 500; }
-      .wn-profit-toast .title { margin-bottom: 6px; font-weight: 700; }
-      .wn-profit-toast .ok { color: #4ade80; font-weight: 700; }
-      .wn-profit-toast .bad { color: #fb7185; font-weight: 700; }
-      .wn-profit-toast .hint { margin-top: 6px; opacity: 0.7; font-size: 11px; font-weight: 500; }
-      .wn-profit-toast.sale-profit {
-        background: rgba(22, 101, 52, 0.94);
-        border-color: rgba(74, 222, 128, 0.5);
-        box-shadow: 0 14px 34px rgba(22, 101, 52, 0.45);
-      }
-      .wn-profit-toast.sale-loss {
-        background: rgba(127, 29, 29, 0.94);
-        border-color: rgba(252, 165, 165, 0.5);
-        box-shadow: 0 14px 34px rgba(127, 29, 29, 0.45);
-      }
-      @keyframes wn-pulse {
-        0%   { transform: scale(1);    opacity: 1; }
-        15%  { transform: scale(1.04); opacity: 0.9; }
-        30%  { transform: scale(1);    opacity: 1; }
-        45%  { transform: scale(1.03); opacity: 0.92; }
-        60%  { transform: scale(1);    opacity: 1; }
-        100% { transform: scale(1);    opacity: 1; }
-      }
-      .wn-profit-toast.pulse { animation: wn-pulse 0.8s ease-in-out; }
-
-      .wn-analytics-toggle {
-        position: fixed; right: 16px; top: 16px; z-index: 2147483647;
-        width: 36px; height: 36px; border-radius: 50%;
-        background: rgba(15, 23, 42, 0.92); border: 1px solid rgba(148, 163, 184, 0.35);
-        color: #e2e8f0; font-size: 18px; cursor: pointer;
-        display: flex; align-items: center; justify-content: center;
-        backdrop-filter: blur(6px); box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: transform 0.15s;
-      }
-      .wn-analytics-toggle:hover { transform: scale(1.1); }
-
-      .wn-analytics-panel {
-        position: fixed; right: 16px; top: 60px; z-index: 2147483647;
-        width: min(400px, calc(100vw - 32px)); max-height: calc(100vh - 80px);
-        border-radius: 12px; background: rgba(15, 23, 42, 0.97);
-        border: 1px solid rgba(148, 163, 184, 0.35);
-        box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55); color: #e2e8f0;
-        font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        backdrop-filter: blur(8px); overflow-y: auto; display: none;
-      }
-      .wn-analytics-panel.open { display: block; }
-      .wn-analytics-panel .panel-header {
-        padding: 12px 14px; font-weight: 700; font-size: 14px;
-        border-bottom: 1px solid rgba(148, 163, 184, 0.2);
-        display: flex; justify-content: space-between; align-items: center;
-        position: sticky; top: 0; background: rgba(15, 23, 42, 0.97); backdrop-filter: blur(8px);
-      }
-      .wn-analytics-panel .panel-header button,
-      .wn-analytics-panel .settings-section button {
-        background: rgba(99, 102, 241, 0.25); border: 1px solid rgba(99, 102, 241, 0.4);
-        color: #c7d2fe; border-radius: 6px; padding: 4px 10px; font-size: 11px;
-        cursor: pointer; font-weight: 600;
-      }
-      .wn-analytics-panel .panel-header button:hover,
-      .wn-analytics-panel .settings-section button:hover { background: rgba(99, 102, 241, 0.4); }
-      .wn-analytics-panel .stats-grid {
-        display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 12px 14px;
-        border-bottom: 1px solid rgba(148, 163, 184, 0.15);
-      }
-      .wn-analytics-panel .stat-box { background: rgba(30, 41, 59, 0.7); border-radius: 8px; padding: 8px 10px; }
-      .wn-analytics-panel .stat-label { font-size: 10px; opacity: 0.65; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
-      .wn-analytics-panel .stat-value { font-size: 16px; font-weight: 700; }
-      .wn-analytics-panel .stat-value.ok { color: #4ade80; font-weight: 800; }
-      .wn-analytics-panel .stat-value.bad { color: #fb7185; font-weight: 800; }
-      .wn-analytics-panel .sale-list { padding: 8px 14px 14px; }
-      .wn-analytics-panel .sale-list-title { font-weight: 700; font-size: 13px; margin-bottom: 8px; opacity: 0.9; }
-      .wn-analytics-panel .sale-entry {
-        background: rgba(30, 41, 59, 0.5); border-radius: 8px; padding: 8px 10px;
-        margin-bottom: 6px; border-left: 5px solid rgba(148, 163, 184, 0.3);
-      }
-      .wn-analytics-panel .sale-entry.profit { border-left-color: #4ade80; background: rgba(22, 101, 52, 0.15); }
-      .wn-analytics-panel .sale-entry.loss { border-left-color: #fb7185; background: rgba(127, 29, 29, 0.15); }
-      .wn-analytics-panel .sale-entry .sale-name {
-        font-weight: 700; font-size: 12px; margin-bottom: 3px;
-        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      }
-      .wn-analytics-panel .sale-entry .sale-row { display: flex; justify-content: space-between; font-size: 11px; opacity: 0.85; }
-      .wn-analytics-panel .sale-entry .sale-meta { font-size: 10px; opacity: 0.55; margin-top: 3px; }
-      .wn-analytics-panel .empty-state { padding: 24px 14px; text-align: center; opacity: 0.5; font-size: 12px; }
-      .wn-analytics-panel .past-sessions { padding: 8px 14px 14px; border-top: 1px solid rgba(148, 163, 184, 0.15); }
-      .wn-analytics-panel .past-session-entry {
-        background: rgba(30, 41, 59, 0.4); border-radius: 8px; padding: 8px 10px;
-        margin-bottom: 6px; cursor: pointer; transition: background 0.15s;
-      }
-      .wn-analytics-panel .past-session-entry:hover { background: rgba(30, 41, 59, 0.7); }
-      .wn-analytics-panel .past-session-entry .ps-date { font-weight: 700; font-size: 11px; }
-      .wn-analytics-panel .past-session-entry .ps-stats { font-size: 10px; opacity: 0.7; margin-top: 2px; }
-      .wn-analytics-panel .sheets-bar {
-        padding: 8px 14px; border-bottom: 1px solid rgba(148, 163, 184, 0.15);
-        display: flex; align-items: center; justify-content: space-between; font-size: 11px;
-      }
-      .wn-analytics-panel .sheets-bar .sync-status { display: flex; align-items: center; gap: 6px; }
-      .wn-analytics-panel .sheets-bar .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-      .wn-analytics-panel .sheets-bar .dot.on { background: #86efac; }
-      .wn-analytics-panel .sheets-bar .dot.off { background: #fda4af; }
-      .wn-analytics-panel .settings-section { padding: 12px 14px; border-bottom: 1px solid rgba(148, 163, 184, 0.15); }
-      .wn-analytics-panel .settings-section label { display: block; font-size: 11px; font-weight: 600; margin-bottom: 6px; opacity: 0.8; }
-      .wn-analytics-panel .settings-section input {
-        width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 6px;
-        border: 1px solid rgba(148, 163, 184, 0.35); background: rgba(30, 41, 59, 0.7);
-        color: #e2e8f0; font-size: 11px; font-family: monospace; outline: none;
-      }
-      .wn-analytics-panel .settings-section input:focus { border-color: rgba(99, 102, 241, 0.6); }
-      .wn-analytics-panel .settings-section .settings-actions { margin-top: 8px; display: flex; gap: 8px; }
-      .wn-analytics-panel .settings-section .hint { margin-top: 8px; font-size: 10px; opacity: 0.5; line-height: 1.5; }
-    `;
-    (document.head || document.documentElement).appendChild(style);
-  }
+  // CSS is now loaded from styles.css via manifest.json
 
   function getPopupElement() {
-    ensureToastStyles();
     const id = "wn-profit-toast";
     let el = document.getElementById(id);
     if (!el) {
@@ -611,7 +509,6 @@
   /* ── Analytics panel UI ──────────────────────────────── */
 
   function getToggleButton() {
-    ensureToastStyles();
     let btn = document.getElementById("wn-analytics-toggle");
     if (!btn) {
       btn = document.createElement("div");
@@ -626,7 +523,6 @@
   }
 
   function getAnalyticsPanel() {
-    ensureToastStyles();
     let panel = document.getElementById("wn-analytics-panel");
     if (!panel) {
       panel = document.createElement("div");
@@ -667,7 +563,8 @@
     const saleCount = s.sales.length;
     const avgDuration = avg(s.auctionDurations);
     const avgGap = avg(s.gapDurations);
-    const { revenue: dispRevenue, cost: dispCost, profit: dispProfit, bids: dispBids } = computeTotals(s);
+    const totals = computeTotals(s);
+    const { revenue: dispRevenue, cost: dispCost, net: dispNet, profit: dispProfit, bids: dispBids, avgSale, highest, lowest } = totals;
     const profitClass = dispProfit >= 0 ? "ok" : "bad";
     const isViewing = viewSession && viewSession !== session;
 
@@ -701,11 +598,31 @@
         </div>
         <div class="stat-box">
           <div class="stat-label">Net (after 15%)</div>
-          <div class="stat-value">${formatMoney(computeTotals(s).net, "USD")}</div>
+          <div class="stat-value">${formatMoney(dispNet, "USD")}</div>
         </div>
         <div class="stat-box">
           <div class="stat-label">Total Cost</div>
           <div class="stat-value">${formatMoney(dispCost, "USD")}</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Profit / Hour</div>
+          <div class="stat-value ${profitClass}">${elapsed > 0 ? formatMoney(dispProfit / (elapsed / 3600000), "USD") : "\u2014"}</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Revenue / Hour</div>
+          <div class="stat-value">${elapsed > 0 ? formatMoney(dispRevenue / (elapsed / 3600000), "USD") : "\u2014"}</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Avg Sale</div>
+          <div class="stat-value">${avgSale > 0 ? formatMoney(avgSale, "USD") : "\u2014"}</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Highest Sale</div>
+          <div class="stat-value">${highest > 0 ? formatMoney(highest, "USD") : "\u2014"}</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Lowest Sale</div>
+          <div class="stat-value">${lowest > 0 ? formatMoney(lowest, "USD") : "\u2014"}</div>
         </div>
         <div class="stat-box">
           <div class="stat-label">Total Bids</div>
@@ -718,10 +635,6 @@
         <div class="stat-box">
           <div class="stat-label">Avg Gap</div>
           <div class="stat-value">${formatDuration(avgGap)}</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-label">Profit / Hour</div>
-          <div class="stat-value ${profitClass}">${elapsed > 0 ? formatMoney(dispProfit / (elapsed / 3600000), "USD") : "\u2014"}</div>
         </div>
       </div>
       <div class="sale-list">
@@ -915,7 +828,7 @@
 
   function exportCsv(s) {
     if (!s || !s.sales.length) return;
-    const headers = ["Timestamp", "Session ID", "Item", "Sale Price", "Cost", "Net (after 15%)", "Profit", "Bids", "Auction Duration (s)", "Gap From Last (s)", "Description"];
+    const headers = ["Timestamp", "Session ID", "Item", "Sale Price", "Cost", "Net (after 15%)", "Profit", "Bids", "Auction Duration (s)", "Gap From Last (s)", "Description", "Viewers"];
     const rows = [headers];
     const sessionId = s.liveId ? `${s.liveId}-${s.startedAt}` : "";
     const round2 = (n) => (typeof n === "number" && !isNaN(n) ? Math.round(n * 100) / 100 : "");
@@ -932,7 +845,8 @@
         typeof e.bidCount === "number" ? e.bidCount : "",
         typeof e.auctionDuration === "number" ? Math.round(e.auctionDuration / 1000) : "",
         typeof e.gapFromLast === "number" ? Math.round(e.gapFromLast / 1000) : "",
-        esc(e.description || "")
+        esc(e.description || ""),
+        typeof e.viewers === "number" ? e.viewers : ""
       ]);
     });
     const csvTotals = computeTotals(s);
@@ -943,6 +857,9 @@
     rows.push(["Net (after 15%)", round2(csvTotals.net)]);
     rows.push(["Total Cost", round2(csvTotals.cost)]);
     rows.push(["Total Profit", round2(csvTotals.profit)]);
+    rows.push(["Avg Sale Price", round2(csvTotals.avgSale)]);
+    rows.push(["Highest Sale", round2(csvTotals.highest)]);
+    rows.push(["Lowest Sale", round2(csvTotals.lowest)]);
     rows.push(["Total Bids", csvTotals.bids]);
     rows.push(["Avg Auction", typeof avg(s.auctionDurations) === "number" ? Math.round(avg(s.auctionDurations) / 1000) + "s" : ""]);
     rows.push(["Avg Gap", typeof avg(s.gapDurations) === "number" ? Math.round(avg(s.gapDurations) / 1000) + "s" : ""]);
@@ -992,7 +909,8 @@
           if (Number.isFinite(amountCents)) return { amountCents, currency };
         }
         return null;
-      } catch {
+      } catch (e) {
+        console.log("[WN Profit] fetchListingCost error for", key, ":", e?.message);
         return null;
       } finally {
         window.clearTimeout(timer);
@@ -1012,6 +930,7 @@
   const DOM_BID_COUNT_SELECTOR = "#bottom-section-stream-container > div > div:nth-child(1) > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div > div > div:nth-child(1) > div > p";
   const DOM_PRICE_SELECTOR = "#bottom-section-stream-container > div > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div:nth-child(1) > div:nth-child(2)";
   const DOM_DESCRIPTION_SELECTOR = "#bottom-section-stream-container > div > div > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div > div > div:nth-child(2) > div:nth-child(4)";
+  const DOM_VIEWER_COUNT_SELECTOR = "#app > div > div:nth-child(3) > div > div > div > div:nth-child(4) > div > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div:nth-child(2) > div > div:nth-child(1) > div > div:nth-child(4)";
   const TIMER_PATTERN = /^\d{1,2}:\d{2}$/;
   const TIMER_CONTAINER = "#bottom-section-stream-container";
   let cachedTimerEl = null;
@@ -1074,6 +993,14 @@
   function getDomDescription() {
     const el = document.querySelector(DOM_DESCRIPTION_SELECTOR);
     return el ? (el.textContent || "").trim() || null : null;
+  }
+
+  function getDomViewerCount() {
+    const el = document.querySelector(DOM_VIEWER_COUNT_SELECTOR);
+    if (!el) return null;
+    const text = (el.textContent || "").trim().replace(/[,\s]/g, "");
+    const n = parseInt(text, 10);
+    return Number.isFinite(n) ? n : null;
   }
 
   function getDomTimer() {
@@ -1294,21 +1221,22 @@
       auctionStartTime = null;
 
       const noBids = (bidCount ?? 0) === 0;
+      const viewers = getDomViewerCount();
 
       if (noBids) {
-        console.log("[WN Profit] auction ended with no bids", { title: title?.slice(0, 60), auctionDuration, gapFromLast });
+        console.log("[WN Profit] auction ended with no bids", { title: title?.slice(0, 60), auctionDuration, gapFromLast, viewers });
         syncNoSaleToSheets({
-          timestamp: now, title, auctionDuration, gapFromLast
+          timestamp: now, title, auctionDuration, gapFromLast, viewers
         });
       } else {
         console.log("[WN Profit] sale detected (timer hit 00:00)", {
           title: title?.slice(0, 60), priceText, saleAmount, bidCount,
-          cost: costAmount, net, profit: diff, auctionDuration, gapFromLast
+          cost: costAmount, net, profit: diff, auctionDuration, gapFromLast, viewers
         });
         recordSale({
           timestamp: now, title, description: currentListingDescription,
           saleAmount, costAmount, netAmount: net, profit: diff,
-          currency, bidCount, auctionDuration, gapFromLast
+          currency, bidCount, auctionDuration, gapFromLast, viewers
         });
         setSalePopup(title, saleAmount, costAmount, net, diff, currency, bidCount);
         if (panelVisible) renderPanel();
@@ -1334,9 +1262,8 @@
       } catch {}
     }
 
-    if (!isZero && timerText) {
-      saleAlreadyFired = false;
-    }
+    // saleAlreadyFired is reset only when lastDomTitle changes (in pollCurrentItem),
+    // not on timer state, to prevent duplicate triggers from UI flicker.
 
     lastTimerText = timerText;
   }
@@ -1373,7 +1300,9 @@
       console.log("[WN Profit] item changed", {
         domText: domTitle.slice(0, 80), itemNum, listingId, cost: cost?.amountCents ?? null
       });
-    } catch {}
+    } catch (e) {
+      console.log("[WN Profit] pollCurrentItem error:", e?.message);
+    }
   }
 
   function pollTick() {
@@ -1408,7 +1337,11 @@
       return;
     }
 
-    viewStartTime = Date.now();
+    try {
+      const stored = JSON.parse(localStorage.getItem(VIEW_START_KEY) || "{}");
+      viewStartTime = (stored.liveId === currentLiveId && stored.ts) ? stored.ts : Date.now();
+      localStorage.setItem(VIEW_START_KEY, JSON.stringify({ liveId: currentLiveId, ts: viewStartTime }));
+    } catch { viewStartTime = Date.now(); }
     const existing = loadPastSessions().find(s => s.liveId === currentLiveId);
     if (existing) {
       session = existing;

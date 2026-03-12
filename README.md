@@ -121,6 +121,7 @@ The session persists in `server/browser-profile/`. It should stay valid for week
 - Session data is stored locally in `localStorage` (up to 50 sessions) and synced to Google Sheets
 - If a cost is not set for an item, the popup will say `Not set`
 - The Google Sheet is auto-created with Sales, Sessions, and Chat tabs
+- Duplicate chat messages (same username + same text) are intentionally deduplicated to reduce spam. If full chat accuracy is needed in the future, add a timestamp bucket to the hash key in `extractChatMessage` / `recentChatHashes`
 
 ## Future ideas
 
@@ -134,3 +135,6 @@ Two approaches:
 Option 2 is cleaner. To implement, capture a HAR file or Network tab screenshot of the exact request Whatnot sends when you start an auction. The extension already has `bridge.js` hooking `fetch`/`XHR`, so the mutation name and variables can be logged from there.
 
 Once the mutation is known, build a small form in the live view popup (duration, starting bid, buy now) with a "Start" button that fires it for the currently pinned item. Last-used values would be saved to `localStorage`.
+
+### Show duration tracking
+Whatnot displays a HH:MM:SS counter for how long the show has been live. Capture this with a DOM selector (need to get the JS path from the live page) and log it per-sale alongside viewer count. Could also be used to compute more accurate per-hour rates.

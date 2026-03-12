@@ -73,9 +73,9 @@ function ensureSheet(ss, name, headers) {
 var SALE_HEADERS = [
   "Timestamp", "Session ID", "Item", "Sale Price", "Cost",
   "Net (after 15%)", "Profit", "Bids", "Auction Duration (s)", "Gap From Last (s)",
-  "Description", "Source", "Sale ID"
+  "Description", "Viewers", "Source", "Sale ID"
 ];
-var SALE_ID_COL = 12; // 0-indexed column index of "Sale ID" in SALE_HEADERS
+var SALE_ID_COL = SALE_HEADERS.indexOf("Sale ID");
 
 function buildSaleRow(data, source) {
   return [
@@ -90,6 +90,7 @@ function buildSaleRow(data, source) {
     data.auctionDuration != null ? Math.round(data.auctionDuration / 1000) : "",
     data.gapFromLast != null ? Math.round(data.gapFromLast / 1000) : "",
     data.description || "",
+    data.viewers != null ? data.viewers : "",
     source,
     data.saleId || ""
   ];
@@ -97,9 +98,13 @@ function buildSaleRow(data, source) {
 
 function findRowBySaleId(sheet, saleId) {
   if (!saleId) return -1;
-  var values = sheet.getDataRange().getValues();
-  for (var i = 1; i < values.length; i++) {
-    if (String(values[i][SALE_ID_COL]) === String(saleId)) return i + 1; // 1-indexed row
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return -1;
+  var colIdx = SALE_ID_COL + 1; // 1-indexed for Sheets API
+  var values = sheet.getRange(2, colIdx, lastRow - 1, 1).getValues();
+  // Search from bottom (most recent) for speed
+  for (var i = values.length - 1; i >= 0; i--) {
+    if (String(values[i][0]) === String(saleId)) return i + 2; // 1-indexed row (offset by header)
   }
   return -1;
 }
