@@ -74,10 +74,16 @@
     chrome.runtime.sendMessage({ type, payload, webhookUrl }, cb || (() => {}));
   }
 
+  function makeSaleId(sessionId, timestamp) {
+    return `${sessionId}|${Math.round((timestamp || Date.now()) / 5000)}`;
+  }
+
   function syncNoSaleToSheets(entry) {
+    const sessionId = session ? `${session.liveId}-${session.startedAt}` : "";
     sendToBackground("SYNC_SALE", {
       timestamp: entry.timestamp,
-      sessionId: session ? `${session.liveId}-${session.startedAt}` : "",
+      sessionId,
+      saleId: makeSaleId(sessionId, entry.timestamp),
       title: entry.title || "No sale",
       saleAmount: null,
       costAmount: null,
@@ -94,9 +100,11 @@
 
   function syncSaleToSheets(entry) {
     console.log("[WN Profit] attempting sale sync, webhookUrl:", webhookUrl ? "set" : "NOT SET");
+    const sessionId = session ? `${session.liveId}-${session.startedAt}` : "";
     sendToBackground("SYNC_SALE", {
       ...entry,
-      sessionId: session ? `${session.liveId}-${session.startedAt}` : ""
+      sessionId,
+      saleId: makeSaleId(sessionId, entry.timestamp)
     }, (resp) => {
       if (chrome.runtime.lastError) {
         console.log("[WN Profit] runtime error:", chrome.runtime.lastError.message);

@@ -70,7 +70,20 @@ function ensureSheet(ss, name, headers) {
   return sheet;
 }
 
+function isDuplicateSale(saleId) {
+  if (!saleId) return false;
+  var cache = CacheService.getScriptCache();
+  var key = "sale_" + saleId;
+  if (cache.get(key)) return true;
+  cache.put(key, "1", 300);
+  return false;
+}
+
 function writeSale(ss, data) {
+  if (isDuplicateSale(data.saleId)) {
+    console.log("Duplicate sale skipped: " + data.saleId);
+    return;
+  }
   const sheet = ensureSheet(ss, "Sales", [
     "Timestamp", "Session ID", "Item", "Sale Price", "Cost",
     "Net (after 15%)", "Profit", "Bids", "Auction Duration (s)", "Gap From Last (s)"
