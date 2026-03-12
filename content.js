@@ -30,6 +30,7 @@
   let session = null;
   let auctionStartTime = null;
   let lastSaleTime = null;
+  let viewStartTime = 0;
   let panelVisible = false;
   let settingsVisible = false;
   const DEFAULT_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbzSOPc9lvs9fU6S5quI0lj8RBQ_O_RbI34RNfCHzUy9eqVanHhKXltUe9D1vrXcOZ9zqw/exec";
@@ -194,9 +195,12 @@
   function formatDuration(ms) {
     if (typeof ms !== "number" || ms < 0) return "\u2014";
     const totalSec = Math.round(ms / 1000);
-    const m = Math.floor(totalSec / 60);
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
     const s = totalSec % 60;
-    return m > 0 ? `${m}m ${s}s` : `${s}s`;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
   }
 
   function avg(arr) {
@@ -501,7 +505,15 @@
       return;
     }
 
-    const elapsed = Date.now() - s.startedAt;
+    let elapsed;
+    if (s === session) {
+      elapsed = viewStartTime ? Date.now() - viewStartTime : Date.now() - s.startedAt;
+    } else if (s.sales && s.sales.length >= 2) {
+      const ts = s.sales.map(e => e.timestamp);
+      elapsed = Math.max(...ts) - Math.min(...ts);
+    } else {
+      elapsed = s.sales && s.sales.length === 1 ? 0 : (Date.now() - s.startedAt);
+    }
     const saleCount = s.sales.length;
     const avgDuration = avg(s.auctionDurations);
     const avgGap = avg(s.gapDurations);
@@ -1149,6 +1161,7 @@
       return;
     }
 
+    viewStartTime = Date.now();
     const existing = loadPastSessions().find(s => s.liveId === currentLiveId);
     if (existing) {
       session = existing;
