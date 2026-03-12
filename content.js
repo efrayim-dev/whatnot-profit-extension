@@ -700,6 +700,10 @@
           <div class="stat-value">${formatMoney(dispRevenue, "USD")}</div>
         </div>
         <div class="stat-box">
+          <div class="stat-label">Net (after 15%)</div>
+          <div class="stat-value">${formatMoney(computeTotals(s).net, "USD")}</div>
+        </div>
+        <div class="stat-box">
           <div class="stat-label">Total Cost</div>
           <div class="stat-value">${formatMoney(dispCost, "USD")}</div>
         </div>
@@ -716,8 +720,8 @@
           <div class="stat-value">${formatDuration(avgGap)}</div>
         </div>
         <div class="stat-box">
-          <div class="stat-label">Session Time</div>
-          <div class="stat-value">${formatDuration(elapsed)}</div>
+          <div class="stat-label">Profit / Hour</div>
+          <div class="stat-value ${profitClass}">${elapsed > 0 ? formatMoney(dispProfit / (elapsed / 3600000), "USD") : "\u2014"}</div>
         </div>
       </div>
       <div class="sale-list">
@@ -931,14 +935,15 @@
         esc(e.description || "")
       ]);
     });
+    const csvTotals = computeTotals(s);
     rows.push([]);
     rows.push(["Summary"]);
     rows.push(["Total Sales", s.sales.length]);
-    rows.push(["Total Revenue", s.totalRevenue]);
-    rows.push(["Total Cost", s.totalCost]);
-    rows.push(["Total Net", s.totalNet]);
-    rows.push(["Total Profit", s.totalProfit]);
-    rows.push(["Total Bids", s.totalBids || 0]);
+    rows.push(["Total Revenue", round2(csvTotals.revenue)]);
+    rows.push(["Net (after 15%)", round2(csvTotals.net)]);
+    rows.push(["Total Cost", round2(csvTotals.cost)]);
+    rows.push(["Total Profit", round2(csvTotals.profit)]);
+    rows.push(["Total Bids", csvTotals.bids]);
     rows.push(["Avg Auction", typeof avg(s.auctionDurations) === "number" ? Math.round(avg(s.auctionDurations) / 1000) + "s" : ""]);
     rows.push(["Avg Gap", typeof avg(s.gapDurations) === "number" ? Math.round(avg(s.gapDurations) / 1000) + "s" : ""]);
 
