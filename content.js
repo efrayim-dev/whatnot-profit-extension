@@ -115,8 +115,9 @@
 
   setInterval(processSyncRetries, RETRY_INTERVAL_MS);
 
-  function makeSaleId(sessionId, timestamp) {
-    return `${sessionId}|${Math.round((timestamp || Date.now()) / 5000)}`;
+  function makeSaleId(timestamp) {
+    const lid = currentLiveId || "unknown";
+    return `${lid}|${Math.round((timestamp || Date.now()) / 5000)}`;
   }
 
   function getDevicePriority() {
@@ -128,7 +129,7 @@
     sendWithRetry("SYNC_SALE", {
       timestamp: entry.timestamp,
       sessionId,
-      saleId: makeSaleId(sessionId, entry.timestamp),
+      saleId: makeSaleId(entry.timestamp),
       priority: getDevicePriority(),
       title: entry.title || "No sale",
       saleAmount: null,
@@ -152,7 +153,7 @@
     sendWithRetry("SYNC_SALE", {
       ...entry,
       sessionId,
-      saleId: makeSaleId(sessionId, entry.timestamp),
+      saleId: makeSaleId(entry.timestamp),
       priority: getDevicePriority()
     }, (resp) => {
       if (chrome.runtime.lastError) {

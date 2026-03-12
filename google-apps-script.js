@@ -73,7 +73,7 @@ function ensureSheet(ss, name, headers) {
 var SALE_HEADERS = [
   "Timestamp", "Session ID", "Item", "Sale Price", "Cost",
   "Net (after 15%)", "Profit", "Bids", "Auction Duration (s)", "Gap From Last (s)",
-  "Description", "Viewers", "Show Duration", "Source", "Sale ID"
+  "Description", "Viewers", "Source", "Sale ID"
 ];
 var SALE_ID_COL = SALE_HEADERS.indexOf("Sale ID");
 
@@ -91,7 +91,6 @@ function buildSaleRow(data, source) {
     data.gapFromLast != null ? Math.round(data.gapFromLast / 1000) : "",
     data.description || "",
     data.viewers != null ? data.viewers : "",
-    data.showDuration || "",
     source,
     data.saleId || ""
   ];
@@ -129,17 +128,23 @@ function writeSale(ss, data) {
     var secondaryKey = saleId ? "secondary_" + saleId : null;
 
     if (isPrimary) {
-      // Primary: skip only if we already wrote as primary
       if (primaryKey && cache.get(primaryKey)) {
         console.log("Primary duplicate skipped: " + saleId);
         return;
       }
       var row = buildSaleRow(data, "Primary");
-      // If a secondary row was already written, replace it in-place
       var existingRow = saleId ? findRowBySaleId(sheet, saleId) : -1;
       if (existingRow > 0) {
+        // Merge: fill any blank primary cells with secondary's data
+        var oldValues = sheet.getRange(existingRow, 1, 1, row.length).getValues()[0];
+        for (var c = 0; c < row.length; c++) {
+          if ((row[c] === "" || row[c] == null) && oldValues[c] !== "" && oldValues[c] != null) {
+            row[c] = oldValues[c];
+          }
+        }
+        row[SALE_HEADERS.indexOf("Source")] = "Primary";
         sheet.getRange(existingRow, 1, 1, row.length).setValues([row]);
-        console.log("Primary overwrote secondary row for: " + saleId);
+        console.log("Primary merged+overwrote secondary row for: " + saleId);
       } else {
         sheet.appendRow(row);
       }
