@@ -71,7 +71,7 @@ function ensureSheet(ss, name, headers) {
 }
 
 var SALE_HEADERS = [
-  "Timestamp", "Session ID", "Item", "Sale Price", "Cost",
+  "Timestamp", "Session ID", "Buyer", "Item", "Sale Price", "Cost",
   "Net (after 15%)", "Profit", "Bids", "Auction Duration (s)", "Gap From Last (s)",
   "Description", "Viewers", "Source", "Sale ID"
 ];
@@ -81,6 +81,7 @@ function buildSaleRow(data, source) {
   return [
     data.timestamp ? new Date(data.timestamp).toLocaleString() : new Date().toLocaleString(),
     data.sessionId || "",
+    data.buyer || "",
     data.title || "",
     data.saleAmount != null ? data.saleAmount : "",
     data.costAmount != null ? data.costAmount : "",
@@ -237,7 +238,7 @@ function doGet() {
   return ContentService
     .createTextOutput(JSON.stringify({
       status: "ok",
-      version: 3,
+      version: 4,
       message: "Whatnot Sales Webhook is running. Use POST to send data."
     }))
     .setMimeType(ContentService.MimeType.JSON);

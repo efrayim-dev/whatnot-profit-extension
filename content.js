@@ -824,7 +824,7 @@
         chrome.runtime.sendMessage({
           type: "SYNC_SALE",
           webhookUrl: url,
-          payload: { timestamp: Date.now(), title: "Test Sale", saleAmount: 10, costAmount: 5, netAmount: 8.5, profit: 3.5, currency: "USD", bidCount: 3, auctionDuration: 15000, gapFromLast: 5000, sessionId: "test" }
+          payload: { timestamp: Date.now(), title: "Test Sale", buyer: "TestBuyer", saleAmount: 10, costAmount: 5, netAmount: 8.5, profit: 3.5, currency: "USD", bidCount: 3, auctionDuration: 15000, gapFromLast: 5000, sessionId: "test" }
         }, (resp) => {
           if (chrome.runtime.lastError) {
             msgEl.textContent = "Error: " + chrome.runtime.lastError.message;
@@ -862,7 +862,7 @@
 
   function exportCsv(s) {
     if (!s || !s.sales.length) return;
-    const headers = ["Timestamp", "Session ID", "Item", "Sale Price", "Cost", "Net (after 15%)", "Profit", "Bids", "Auction Duration (s)", "Gap From Last (s)", "Description", "Viewers", "Show Duration"];
+    const headers = ["Timestamp", "Session ID", "Buyer", "Item", "Sale Price", "Cost", "Net (after 15%)", "Profit", "Bids", "Auction Duration (s)", "Gap From Last (s)", "Description", "Viewers", "Source", "Sale ID"];
     const rows = [headers];
     const sessionId = s.liveId ? `${s.liveId}-${s.startedAt}` : "";
     const round2 = (n) => (typeof n === "number" && !isNaN(n) ? Math.round(n * 100) / 100 : "");
@@ -871,6 +871,7 @@
       rows.push([
         esc(e.timestamp ? new Date(e.timestamp).toLocaleString() : ""),
         esc(sessionId),
+        esc(e.buyer || ""),
         esc(e.title || ""),
         typeof e.saleAmount === "number" ? round2(e.saleAmount) : "",
         typeof e.costAmount === "number" ? round2(e.costAmount) : "",
@@ -881,7 +882,8 @@
         typeof e.gapFromLast === "number" ? Math.round(e.gapFromLast / 1000) : "",
         esc(e.description || ""),
         typeof e.viewers === "number" ? e.viewers : "",
-        esc(e.showDuration || "")
+        esc(getDevicePriority()),
+        esc(makeSaleId(e.timestamp))
       ]);
     });
     const csvTotals = computeTotals(s);
@@ -965,6 +967,7 @@
   const DOM_BID_COUNT_SELECTOR = "#bottom-section-stream-container > div > div:nth-child(1) > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div > div > div:nth-child(1) > div > p";
   const DOM_PRICE_SELECTOR = "#bottom-section-stream-container > div > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div:nth-child(1) > div:nth-child(2)";
   const DOM_DESCRIPTION_SELECTOR = "#bottom-section-stream-container > div > div > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div > div > div:nth-child(2) > div:nth-child(4)";
+  const DOM_BUYER_SELECTOR = "#bottom-section-stream-container > div > div:nth-child(1) > div:nth-child(1) > div:nth-child(1) > div > div:nth-child(1) > div:nth-child(2)";
   const DOM_VIEWER_COUNT_SELECTOR = "#app > div > div:nth-child(3) > div > div > div > div:nth-child(4) > div > div:nth-child(1) > div:nth-child(2) > div:nth-child(2) > div:nth-child(2) > div > div:nth-child(1) > div > div:nth-child(4)";
   const DOM_SHOW_DURATION_SELECTOR = "#app > div > div:nth-child(3) > div > div > div > div:nth-child(4) > div > div:nth-child(1) > div:nth-child(3) > div:nth-child(1) > div:nth-child(3) > div:nth-child(1) > div:nth-child(3)";
   const TIMER_PATTERN = /^\d{1,2}:\d{2}$/;
@@ -1041,6 +1044,11 @@
 
   function getDomShowDuration() {
     const el = document.querySelector(DOM_SHOW_DURATION_SELECTOR);
+    return el ? (el.textContent || "").trim() || null : null;
+  }
+
+  function getDomBuyer() {
+    const el = document.querySelector(DOM_BUYER_SELECTOR);
     return el ? (el.textContent || "").trim() || null : null;
   }
 
@@ -1268,6 +1276,7 @@
       }
 
       const showDuration = getDomShowDuration();
+      const buyer = noBids ? null : getDomBuyer();
 
       if (noBids) {
         console.log("[WN Profit] auction ended with no bids", { title: title?.slice(0, 60), auctionDuration, gapFromLast, viewers });
@@ -1276,11 +1285,11 @@
         });
       } else {
         console.log("[WN Profit] sale detected (timer hit 00:00)", {
-          title: title?.slice(0, 60), priceText, saleAmount, bidCount,
+          title: title?.slice(0, 60), priceText, saleAmount, bidCount, buyer,
           cost: costAmount, net, profit: diff, auctionDuration, gapFromLast, viewers
         });
         recordSale({
-          timestamp: now, title, description: currentListingDescription,
+          timestamp: now, title, description: currentListingDescription, buyer,
           saleAmount, costAmount, netAmount: net, profit: diff,
           currency, bidCount, auctionDuration, gapFromLast, viewers, showDuration
         });
