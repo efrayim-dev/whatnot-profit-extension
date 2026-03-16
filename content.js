@@ -115,10 +115,11 @@
 
   setInterval(processSyncRetries, RETRY_INTERVAL_MS);
 
-  function makeSaleId(timestamp, title) {
+  function makeSaleId(title, price) {
     const lid = currentLiveId || "unknown";
     const t = (title || "").trim().toLowerCase().slice(0, 60);
-    return `${lid}|${t}|${Math.floor((timestamp || Date.now()) / 30000)}`;
+    const p = price != null ? String(price) : "nosale";
+    return `${lid}|${t}|${p}`;
   }
 
   function getDevicePriority() {
@@ -130,7 +131,7 @@
     sendWithRetry("SYNC_SALE", {
       timestamp: entry.timestamp,
       sessionId,
-      saleId: makeSaleId(entry.timestamp, entry.title),
+      saleId: makeSaleId(entry.title, null),
       priority: getDevicePriority(),
       title: entry.title || "No sale",
       saleAmount: null,
@@ -154,7 +155,7 @@
     sendWithRetry("SYNC_SALE", {
       ...entry,
       sessionId,
-      saleId: makeSaleId(entry.timestamp, entry.title),
+      saleId: makeSaleId(entry.title, entry.saleAmount),
       priority: getDevicePriority()
     }, (resp) => {
       if (chrome.runtime.lastError) {
@@ -884,7 +885,7 @@
         esc(e.description || ""),
         typeof e.viewers === "number" ? e.viewers : "",
         esc(getDevicePriority()),
-        esc(makeSaleId(e.timestamp, e.title))
+        esc(makeSaleId(e.title, e.saleAmount))
       ]);
     });
     const csvTotals = computeTotals(s);

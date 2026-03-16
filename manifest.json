@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Whatnot Profit & Cost Alerts (Analytics)",
-  "version": "4.2.2",
+  "version": "4.2.3",
   "description": "Full session analytics with Google Sheets sync: sale history, bid counts, chat log, auction timing, profit tracking with 15% fee on Whatnot.",
   "permissions": [
     "storage"
