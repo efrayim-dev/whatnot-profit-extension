@@ -1301,7 +1301,7 @@
         if (localStorage.getItem(FOCUS_SEARCH_KEY) === "1") {
           setTimeout(() => {
             const searchBar = findSearchBar();
-            if (searchBar) searchBar.focus();
+            if (searchBar) { searchBar.focus(); searchBar.value = ""; searchBar.dispatchEvent(new Event("input", { bubbles: true })); }
           }, 150);
         }
       } catch {}
@@ -1312,7 +1312,7 @@
       try {
         if (localStorage.getItem(FOCUS_SEARCH_ON_START_KEY) === "1") {
           const searchBar = findSearchBar();
-          if (searchBar) searchBar.focus();
+          if (searchBar) { searchBar.focus(); searchBar.value = ""; searchBar.dispatchEvent(new Event("input", { bubbles: true })); }
         }
       } catch {}
     }
