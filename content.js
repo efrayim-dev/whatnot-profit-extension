@@ -1184,6 +1184,8 @@
 
   let inventoryLoaded = false;
   let inventoryLoading = false;
+  let inventoryRefreshTimer = null;
+  const INVENTORY_REFRESH_MS = 300000; // 5 minutes
 
   async function fetchListingPage(liveId, after) {
     const variables = { livestreamId: liveId, tab: "ACTIVE", first: 100 };
@@ -1218,8 +1220,8 @@
     };
   }
 
-  async function buildInventoryCache(liveId) {
-    if (inventoryLoading || inventoryLoaded) return;
+  async function buildInventoryCache(liveId, force) {
+    if (inventoryLoading || (!force && inventoryLoaded)) return;
     inventoryLoading = true;
     let cursor = null;
     let total = 0;
@@ -1369,6 +1371,7 @@
 
   function clearPolling() {
     if (pollTimer !== null) { window.clearInterval(pollTimer); pollTimer = null; }
+    if (inventoryRefreshTimer !== null) { window.clearInterval(inventoryRefreshTimer); inventoryRefreshTimer = null; }
   }
 
   function startPollingForLive(liveId) {
@@ -1414,6 +1417,13 @@
     void buildInventoryCache(currentLiveId).then(() => {
       setStatusPopup("Live detected", `Livestream: ${currentLiveId.slice(0, 8)}... \u2014 ${titleToListingCache.size} items loaded`);
     });
+    inventoryRefreshTimer = window.setInterval(() => {
+      console.log("[WN Profit] refreshing inventory cache");
+      inventoryLoaded = false;
+      void buildInventoryCache(currentLiveId, true).then(() => {
+        console.log("[WN Profit] inventory refreshed:", titleToListingCache.size, "items");
+      });
+    }, INVENTORY_REFRESH_MS);
     pollTimer = window.setInterval(pollTick, POLL_MS);
     installChatObserver();
     startChatSync();
