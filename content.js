@@ -168,7 +168,7 @@
   }
 
   function syncSessionSummary() {
-    if (!session) return;
+    if (!session || !session.sales.length) return;
     const t = computeTotals(session);
     const elapsed = viewStartTime ? Date.now() - viewStartTime : 0;
     const hrs = elapsed / 3600000;
