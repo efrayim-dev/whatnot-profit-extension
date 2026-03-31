@@ -69,17 +69,29 @@
     });
   }
 
+  function extractModelName(title) {
+    let t = title;
+    const numMatch = /^(\d+):\s*(.*)/.exec(t);
+    if (numMatch) t = numMatch[2];
+    const slashIdx = t.indexOf("//");
+    if (slashIdx > 0) t = t.slice(0, slashIdx);
+    t = t.trim();
+    const spaceIdx = t.indexOf(" ");
+    if (spaceIdx > 0) t = t.slice(spaceIdx + 1).trim();
+    return t;
+  }
+
   function findBlurb(title) {
     if (!title || blurbCache.size === 0) return null;
     const lower = title.toLowerCase();
     if (blurbCache.has(lower)) return blurbCache.get(lower);
-    const numMatch = /^(\d+):\s*(.*)/.exec(title);
-    if (numMatch) {
-      const afterNum = numMatch[2].trim().toLowerCase();
-      if (blurbCache.has(afterNum)) return blurbCache.get(afterNum);
-    }
-    for (const [model, blurb] of blurbCache) {
-      if (lower.includes(model)) return blurb;
+
+    const model = extractModelName(title).toLowerCase();
+    if (model && blurbCache.has(model)) return blurbCache.get(model);
+
+    for (const [key, blurb] of blurbCache) {
+      if (model && model.includes(key)) return blurb;
+      if (key.includes(model)) return blurb;
     }
     return null;
   }
