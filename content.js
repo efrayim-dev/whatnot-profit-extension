@@ -46,6 +46,44 @@
 
   let sessionSyncTimer = null;
 
+  /* ── Blurb cache ─────────────────────────────────────── */
+
+  const blurbCache = new Map();
+
+  function fetchBlurbs() {
+    if (!webhookUrl || typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return;
+    chrome.runtime.sendMessage({ type: "GET_BLURBS", webhookUrl }, (resp) => {
+      if (chrome.runtime.lastError) {
+        console.log("[WN Profit] blurb fetch error:", chrome.runtime.lastError.message);
+        return;
+      }
+      if (resp?.status === "ok" && Array.isArray(resp.blurbs)) {
+        blurbCache.clear();
+        for (const b of resp.blurbs) {
+          blurbCache.set(b.name.toLowerCase(), b.blurb);
+        }
+        console.log("[WN Profit] blurb cache loaded:", blurbCache.size, "entries");
+      } else {
+        console.log("[WN Profit] blurb fetch failed:", resp?.error || "unknown");
+      }
+    });
+  }
+
+  function findBlurb(title) {
+    if (!title || blurbCache.size === 0) return null;
+    const lower = title.toLowerCase();
+    if (blurbCache.has(lower)) return blurbCache.get(lower);
+    const numMatch = /^(\d+):\s*(.*)/.exec(title);
+    if (numMatch) {
+      const afterNum = numMatch[2].trim().toLowerCase();
+      if (blurbCache.has(afterNum)) return blurbCache.get(afterNum);
+    }
+    for (const [model, blurb] of blurbCache) {
+      if (lower.includes(model)) return blurb;
+    }
+    return null;
+  }
+
   /* ── Chat state ──────────────────────────────────────── */
 
   let chatObserver = null;
@@ -509,12 +547,14 @@
     );
   }
 
-  function setCurrentItemPopup(title, cost) {
+  function setCurrentItemPopup(title, cost, blurb) {
     const currency = cost?.currency || "USD";
+    const blurbHtml = blurb ? `<div class="blurb">${escHtml(blurb)}</div>` : "";
     setPopup(
       `<div class="title">Current Item</div>
        <div class="row"><span class="label">Item</span><span>${title}</span></div>
-       <div class="row"><span class="label">Cost</span><span>${cost ? formatMoney(cost.amountCents / 100, currency) : "Not set"}</span></div>`
+       <div class="row"><span class="label">Cost</span><span>${cost ? formatMoney(cost.amountCents / 100, currency) : "Not set"}</span></div>
+       ${blurbHtml}`
     );
   }
 
@@ -1339,12 +1379,14 @@
       const itemNum = numMatch ? numMatch[1] : null;
 
       const cached = (itemNum && titleToListingCache.get(itemNum)) || titleToListingCache.get(domTitle);
+      const blurb = findBlurb(domTitle);
+
       if (!cached) {
         console.log("[WN Profit] item not in inventory cache", { domTitle: domTitle.slice(0, 60), itemNum, cacheSize: titleToListingCache.size });
         currentListingId = null;
         currentListingCost = null;
         currentListingDescription = null;
-        setCurrentItemPopup(domTitle, null);
+        setCurrentItemPopup(domTitle, null, blurb);
         return;
       }
       const listingId = decodeRelayListingId(cached.id);
@@ -1355,7 +1397,7 @@
       currentListingCost = cost;
       currentListingCurrency = cost?.currency || "USD";
       currentListingDescription = getDomDescription();
-      setCurrentItemPopup(domTitle, cost);
+      setCurrentItemPopup(domTitle, cost, blurb);
       console.log("[WN Profit] item changed", {
         domText: domTitle.slice(0, 80), itemNum, listingId, cost: cost?.amountCents ?? null
       });
@@ -1414,12 +1456,14 @@
     saveSession();
 
     setStatusPopup("Live detected", `Livestream: ${currentLiveId.slice(0, 8)}... \u2014 loading inventory`);
+    fetchBlurbs();
     void buildInventoryCache(currentLiveId).then(() => {
       setStatusPopup("Live detected", `Livestream: ${currentLiveId.slice(0, 8)}... \u2014 ${titleToListingCache.size} items loaded`);
     });
     inventoryRefreshTimer = window.setInterval(() => {
       console.log("[WN Profit] refreshing inventory cache");
       inventoryLoaded = false;
+      fetchBlurbs();
       void buildInventoryCache(currentLiveId, true).then(() => {
         console.log("[WN Profit] inventory refreshed:", titleToListingCache.size, "items");
       });

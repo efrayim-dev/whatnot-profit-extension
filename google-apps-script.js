@@ -15,12 +15,16 @@
  * If updating: Deploy > Manage deployments > Edit > New version > Deploy
  */
 
+var BLURB_HEADERS = ["Model Name", "Blurb"];
+
 function doPost(e) {
   try {
     const data = JSON.parse(e.postData.contents);
     const ss = getOrCreateSpreadsheet();
 
-    if (data.type === "session_summary") {
+    if (data.type === "get_blurbs") {
+      return readBlurbs(ss);
+    } else if (data.type === "session_summary") {
       writeSummary(ss, data);
     } else if (data.messages && Array.isArray(data.messages)) {
       writeChat(ss, data);
@@ -36,6 +40,23 @@ function doPost(e) {
       .createTextOutput(JSON.stringify({ status: "error", message: err.message }))
       .setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+function readBlurbs(ss) {
+  var sheet = ensureSheet(ss, "Blurbs", BLURB_HEADERS);
+  var lastRow = sheet.getLastRow();
+  var blurbs = [];
+  if (lastRow >= 2) {
+    var rows = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
+    for (var i = 0; i < rows.length; i++) {
+      var name = String(rows[i][0] || "").trim();
+      var blurb = String(rows[i][1] || "").trim();
+      if (name) blurbs.push({ name: name, blurb: blurb });
+    }
+  }
+  return ContentService
+    .createTextOutput(JSON.stringify({ status: "ok", blurbs: blurbs }))
+    .setMimeType(ContentService.MimeType.JSON);
 }
 
 function getOrCreateSpreadsheet() {

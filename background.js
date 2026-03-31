@@ -9,6 +9,20 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === "GET_BLURBS") {
+    const url = msg.webhookUrl;
+    if (!url) { sendResponse({ ok: false, error: "no webhook URL" }); return true; }
+    fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: JSON.stringify({ type: "get_blurbs" }),
+      redirect: "follow"
+    }).then(resp => resp.json())
+      .then(json => sendResponse(json))
+      .catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+
   if (msg.type === "SYNC_SALE" || msg.type === "SYNC_SESSION_SUMMARY" || msg.type === "SYNC_CHAT") {
     const url = msg.webhookUrl;
     if (!url) {
