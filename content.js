@@ -536,6 +536,14 @@
         document.addEventListener("mouseup", onUp);
       });
     }
+    if (!el.dataset.resizeInit) {
+      el.dataset.resizeInit = "1";
+      const BASE_WIDTH = 360;
+      new ResizeObserver(() => {
+        const scale = Math.max(0.8, Math.min(el.offsetWidth / BASE_WIDTH, 2.5));
+        el.style.fontSize = (13 * scale) + "px";
+      }).observe(el);
+    }
     return el;
   }
 

@@ -24,7 +24,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  font-size: 11px;
+  font-size: 0.85em;
   opacity: 0.9;
   user-select: none;
 }
@@ -45,14 +45,14 @@
 .wn-profit-toast .title { margin-bottom: 6px; font-weight: 700; }
 .wn-profit-toast .ok { color: #4ade80; font-weight: 700; }
 .wn-profit-toast .bad { color: #fb7185; font-weight: 700; }
-.wn-profit-toast .hint { margin-top: 6px; opacity: 0.7; font-size: 11px; font-weight: 500; }
+.wn-profit-toast .hint { margin-top: 6px; opacity: 0.7; font-size: 0.85em; font-weight: 500; }
 .wn-profit-toast .blurb {
   margin-top: 8px;
   padding: 6px 8px;
   background: rgba(99, 102, 241, 0.15);
   border-left: 3px solid rgba(99, 102, 241, 0.6);
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 0.85em;
   font-weight: 500;
   line-height: 1.5;
   color: #c7d2fe;
