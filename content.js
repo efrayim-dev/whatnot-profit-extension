@@ -41,6 +41,7 @@
   let panelVisible = false;
   let settingsVisible = false;
   const DEFAULT_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbzSOPc9lvs9fU6S5quI0lj8RBQ_O_RbI34RNfCHzUy9eqVanHhKXltUe9D1vrXcOZ9zqw/exec";
+  const WEBHOOK_SECRET = "wn_efrayim_2026";
   let webhookUrl = DEFAULT_WEBHOOK_URL;
   let sheetsConnected = true;
 
@@ -52,7 +53,7 @@
 
   function fetchBlurbs() {
     if (!webhookUrl || typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return;
-    chrome.runtime.sendMessage({ type: "GET_BLURBS", webhookUrl }, (resp) => {
+    chrome.runtime.sendMessage({ type: "GET_BLURBS", webhookUrl, secret: WEBHOOK_SECRET }, (resp) => {
       if (chrome.runtime.lastError) {
         console.log("[WN Profit] blurb fetch error:", chrome.runtime.lastError.message);
         return;
@@ -131,7 +132,8 @@
 
   function sendToBackground(type, payload, cb) {
     if (!webhookUrl || typeof chrome === "undefined" || !chrome.runtime?.sendMessage) return;
-    chrome.runtime.sendMessage({ type, payload, webhookUrl }, cb || (() => {}));
+    const p = payload ? { ...payload, secret: WEBHOOK_SECRET } : { secret: WEBHOOK_SECRET };
+    chrome.runtime.sendMessage({ type, payload: p, webhookUrl }, cb || (() => {}));
   }
 
   function sendWithRetry(type, payload, cb) {
@@ -878,7 +880,7 @@
         chrome.runtime.sendMessage({
           type: "SYNC_SALE",
           webhookUrl: url,
-          payload: { timestamp: Date.now(), title: "Test Sale", buyer: "TestBuyer", saleAmount: 10, costAmount: 5, netAmount: 8.5, profit: 3.5, currency: "USD", bidCount: 3, auctionDuration: 15000, gapFromLast: 5000, sessionId: "test" }
+          payload: { timestamp: Date.now(), title: "Test Sale", buyer: "TestBuyer", saleAmount: 10, costAmount: 5, netAmount: 8.5, profit: 3.5, currency: "USD", bidCount: 3, auctionDuration: 15000, gapFromLast: 5000, sessionId: "test", secret: WEBHOOK_SECRET }
         }, (resp) => {
           if (chrome.runtime.lastError) {
             msgEl.textContent = "Error: " + chrome.runtime.lastError.message;

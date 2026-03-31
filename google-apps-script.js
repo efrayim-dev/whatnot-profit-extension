@@ -17,9 +17,16 @@
 
 var BLURB_HEADERS = ["Model Name", "Blurb"];
 
+var WEBHOOK_SECRET = "wn_efrayim_2026";
+
 function doPost(e) {
   try {
     const data = JSON.parse(e.postData.contents);
+    if (data.secret !== WEBHOOK_SECRET) {
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: "error", message: "unauthorized" }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
     const ss = getOrCreateSpreadsheet();
 
     if (data.type === "get_blurbs") {

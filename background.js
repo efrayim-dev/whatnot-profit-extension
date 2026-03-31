@@ -15,7 +15,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     fetch(url, {
       method: "POST",
       headers: { "Content-Type": "text/plain" },
-      body: JSON.stringify({ type: "get_blurbs" }),
+      body: JSON.stringify({ type: "get_blurbs", secret: msg.secret }),
       redirect: "follow"
     }).then(resp => resp.json())
       .then(json => sendResponse(json))
